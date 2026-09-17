@@ -57,3 +57,5 @@ jobs:
             echo "== $url =="
             curl -kIsS --max-time 10 "$url" | sed -n '1,8p' || echo "No HTTP response"
           done
+
+# Manual recheck requested after production access issue on 2026-09-17.
