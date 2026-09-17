@@ -14,7 +14,7 @@
 
 GitHub Actions Secrets не импортируются в Codex автоматически. Если setup script требует ключей, их задают отдельно в настройках Secrets среды Codex. Согласно [официальной документации](https://learn.chatgpt.com/docs/environments/cloud-environment), такие секреты доступны setup script и удаляются из окружения до работы агента. Не переносите их в `.bashrc` или файлы репозитория, чтобы обходить это ограничение.
 
-В репозитории есть GitHub Actions workflows, которые получают repository secrets во время выполнения. `Production preflight` проверяет SSH и API СДЭК, `Deploy production` выполняет развёртывание по ручному запуску. Для нового VPS SSH уже проверен; домен и DNS-доступ пока не настроены. Текущее состояние находится в [HANDOFF.md](HANDOFF.md).
+В репозитории есть GitHub Actions workflows, которые получают repository secrets во время выполнения. `Production preflight` проверяет SSH и API СДЭК, `Deploy production` выполняет развёртывание по ручному запуску. Для нового VPS SSH уже проверен; домен `snowbrick.ru` направлен на `194.58.102.218`, значение `REG_VPS_DOMAIN` сохранено. Установка приложения и HTTPS на новом сервере ещё предстоят. Текущее состояние находится в [HANDOFF.md](HANDOFF.md).
 
 В Codex интернет во время работы агента по умолчанию выключен и настраивается отдельно; трафик среды проходит через HTTP/HTTPS-прокси. Поэтому переезд в облако сам по себе не гарантирует прямой SSH-доступ к VPS. Сначала проверить сеть и SSH отдельно, затем выбирать способ развёртывания. [Документация сред Codex](https://learn.chatgpt.com/docs/environments/cloud-environment).
 
