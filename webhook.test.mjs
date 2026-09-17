@@ -1,0 +1,3 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {validWebhookKey,webhookOrder} from './webhook.mjs';
+test('вебхук требует секрет нужной длины',()=>{assert.equal(validWebhookKey('',''),false);assert.equal(validWebhookKey('x','x'),false);assert.equal(validWebhookKey('a'.repeat(40),'a'.repeat(40)),true);assert.equal(validWebhookKey('b'.repeat(40),'a'.repeat(40)),false)});
+test('номер из вебхука не теряет точность',()=>{assert.equal(webhookOrder({type:'ORDER_STATUS',uuid:'72753031-1820-4f99-9240-aab139f05ca5',attributes:{cdek_number:'12345678901234567890'}}),'12345678901234567890');assert.throws(()=>webhookOrder({type:'ORDER_STATUS',attributes:{cdek_number:'../../etc'}}));assert.throws(()=>webhookOrder({type:'OTHER'}))});
