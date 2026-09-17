@@ -13,14 +13,18 @@ ENV_IN=/root/amo.env.new
 DASH_USER_FILE=/root/amo-dashboard-user
 DASH_PASSWORD_FILE=/root/amo-dashboard-password
 ORDER_NUMBERS_FILE=/root/amo-order-numbers
+CREDENTIALS_FILE=/root/amo-dashboard-credentials.txt
 
-for f in "$ARCHIVE" "$ENV_IN" "$DASH_USER_FILE" "$DASH_PASSWORD_FILE"; do
+for f in "$ARCHIVE" "$ENV_IN"; do
   [[ -s "$f" ]] || { echo "Нет обязательного файла $f" >&2; exit 1; }
 done
 
+if [[ ! -s "$DASH_USER_FILE" ]]; then printf 'admin' > "$DASH_USER_FILE"; fi
+if [[ ! -s "$DASH_PASSWORD_FILE" ]]; then umask 077; openssl rand -base64 24 | tr -d '\n' > "$DASH_PASSWORD_FILE"; fi
+
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl git nginx apache2-utils certbot python3-certbot-nginx openssh-server
+apt-get install -y ca-certificates curl git nginx apache2-utils certbot python3-certbot-nginx openssh-server openssl
 
 if ! command -v node >/dev/null 2>&1 || [[ $(node -p 'Number(process.versions.node.split(".")[0])') -lt 22 ]]; then
   curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
@@ -55,9 +59,7 @@ WEBHOOK_SECRET=""
 if [[ -f /etc/amo.env ]]; then
   WEBHOOK_SECRET=$(sed -n 's/^CDEK_WEBHOOK_SECRET="\(.*\)"$/\1/p' /etc/amo.env | tail -n1 || true)
 fi
-if [[ -z "$WEBHOOK_SECRET" ]]; then
-  WEBHOOK_SECRET=$(openssl rand -hex 32)
-fi
+if [[ -z "$WEBHOOK_SECRET" ]]; then WEBHOOK_SECRET=$(openssl rand -hex 32); fi
 printf 'CDEK_WEBHOOK_SECRET="%s"\n' "$WEBHOOK_SECRET" >> /etc/amo.env.next
 mv /etc/amo.env.next /etc/amo.env
 chmod 0600 /etc/amo.env
@@ -93,21 +95,20 @@ systemctl enable --now amo.service
 systemctl restart amo.service
 
 for _ in {1..30}; do
-  if curl -fsS --max-time 2 http://127.0.0.1:3080/api/state >/dev/null; then
-    break
-  fi
+  curl -fsS --max-time 2 http://127.0.0.1:3080/api/state >/dev/null && break
   sleep 1
 done
 curl -fsS --max-time 5 http://127.0.0.1:3080/api/state >/dev/null
 
 DASH_USER=$(cat "$DASH_USER_FILE")
-if [[ ! "$DASH_USER" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then
-  echo "Недопустимое имя пользователя панели" >&2
-  exit 1
-fi
-htpasswd -ciB /etc/nginx/amo.htpasswd "$DASH_USER" < "$DASH_PASSWORD_FILE" >/dev/null
+DASH_PASSWORD=$(cat "$DASH_PASSWORD_FILE")
+if [[ ! "$DASH_USER" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then echo "Недопустимое имя пользователя панели" >&2; exit 1; fi
+htpasswd -cbB /etc/nginx/amo.htpasswd "$DASH_USER" "$DASH_PASSWORD" >/dev/null
 chown root:www-data /etc/nginx/amo.htpasswd
 chmod 0640 /etc/nginx/amo.htpasswd
+umask 077
+printf 'URL=https://%s/\nUSER=%s\nPASSWORD=%s\n' "$DOMAIN" "$DASH_USER" "$DASH_PASSWORD" > "$CREDENTIALS_FILE"
+chmod 0600 "$CREDENTIALS_FILE"
 
 cat >/etc/nginx/sites-available/amo <<NGINX
 server {
@@ -148,27 +149,19 @@ if [[ -s "$ORDER_NUMBERS_FILE" ]]; then
 import json, re, sys
 text = open(sys.argv[1], encoding='utf-8').read()
 nums = [x for x in re.split(r'[\s,;]+', text) if x]
-if not nums or any(not re.fullmatch(r'\d{5,20}', x) for x in nums):
-    raise SystemExit('Некорректный CDEK_ORDER_NUMBERS')
+if not nums or any(not re.fullmatch(r'\d{5,20}', x) for x in nums): raise SystemExit('Некорректный CDEK_ORDER_NUMBERS')
 print(json.dumps({'numbers': ' '.join(dict.fromkeys(nums))}, ensure_ascii=False))
 PY
-  curl -fsS -X POST http://127.0.0.1:3080/api/sync \
-    -H 'Content-Type: application/json' \
-    --data-binary @/tmp/amo-sync-body.json >/dev/null
-
+  curl -fsS -X POST http://127.0.0.1:3080/api/sync -H 'Content-Type: application/json' --data-binary @/tmp/amo-sync-body.json >/dev/null
   for _ in {1..90}; do
     STATE=$(curl -fsS http://127.0.0.1:3080/api/state | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d.get("orders",[])), d.get("pendingCount",0), int(bool(d.get("job",{}).get("running"))), len(d.get("job",{}).get("errors",[])))')
     read -r ORDER_COUNT PENDING RUNNING ERRORS <<<"$STATE"
-    if [[ "$PENDING" == 0 && "$RUNNING" == 0 ]]; then
-      echo "СДЭК: загружено заказов $ORDER_COUNT; ошибок последней синхронизации $ERRORS"
-      break
-    fi
+    if [[ "$PENDING" == 0 && "$RUNNING" == 0 ]]; then echo "СДЭК: загружено заказов $ORDER_COUNT; ошибок последней синхронизации $ERRORS"; break; fi
     sleep 2
   done
 fi
 
 set -a
-# shellcheck disable=SC1091
 . /etc/amo.env
 set +a
 node --input-type=module <<'NODE'
@@ -177,50 +170,21 @@ const secret = process.env.CDEK_CLIENT_SECRET || process.env.AMO_PASSWORD;
 const domain = process.env.VPS_DOMAIN_FOR_WEBHOOK;
 const hookSecret = process.env.CDEK_WEBHOOK_SECRET;
 if (!id || !secret || !domain || !hookSecret) throw new Error('Не хватает данных для webhook СДЭК');
-const tokenResponse = await fetch('https://api.cdek.ru/v2/oauth/token', {
-  method: 'POST',
-  headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-  body: new URLSearchParams({grant_type:'client_credentials', client_id:id, client_secret:secret}),
-  signal: AbortSignal.timeout(30000)
-});
+const tokenResponse = await fetch('https://api.cdek.ru/v2/oauth/token', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'client_credentials',client_id:id,client_secret:secret}),signal:AbortSignal.timeout(30000)});
 if (!tokenResponse.ok) throw new Error(`СДЭК OAuth: ${tokenResponse.status}`);
-const token = (await tokenResponse.json()).access_token;
-if (!token) throw new Error('СДЭК не выдал токен');
-const auth = {Authorization: `Bearer ${token}`};
-const desiredUrl = `https://${domain}/webhooks/cdek/${hookSecret}`;
-const listResponse = await fetch('https://api.cdek.ru/v2/webhooks', {headers: auth, signal: AbortSignal.timeout(30000)});
+const token=(await tokenResponse.json()).access_token;
+const auth={Authorization:`Bearer ${token}`};
+const desiredUrl=`https://${domain}/webhooks/cdek/${hookSecret}`;
+const listResponse=await fetch('https://api.cdek.ru/v2/webhooks',{headers:auth,signal:AbortSignal.timeout(30000)});
 if (!listResponse.ok) throw new Error(`СДЭК список webhook: ${listResponse.status}`);
-const data = await listResponse.json();
-let exists = false;
-const seen = new Set();
-function walk(value) {
-  if (!value || typeof value !== 'object' || seen.has(value)) return;
-  seen.add(value);
-  if (value.type === 'ORDER_STATUS' && value.url === desiredUrl) exists = true;
-  if (Array.isArray(value)) for (const x of value) walk(x);
-  else for (const x of Object.values(value)) walk(x);
-}
+const data=await listResponse.json(); let exists=false; const seen=new Set();
+function walk(v){if(!v||typeof v!=='object'||seen.has(v))return;seen.add(v);if(v.type==='ORDER_STATUS'&&v.url===desiredUrl)exists=true;if(Array.isArray(v))for(const x of v)walk(x);else for(const x of Object.values(v))walk(x)}
 walk(data);
-if (!exists) {
-  const createResponse = await fetch('https://api.cdek.ru/v2/webhooks', {
-    method: 'POST',
-    headers: {...auth, 'Content-Type':'application/json'},
-    body: JSON.stringify({type:'ORDER_STATUS', url:desiredUrl}),
-    signal: AbortSignal.timeout(30000)
-  });
-  if (!createResponse.ok) throw new Error(`СДЭК создание webhook: ${createResponse.status}`);
-  console.log('СДЭК: подписка ORDER_STATUS создана');
-} else {
-  console.log('СДЭК: нужная подписка ORDER_STATUS уже существует');
-}
+if(!exists){const r=await fetch('https://api.cdek.ru/v2/webhooks',{method:'POST',headers:{...auth,'Content-Type':'application/json'},body:JSON.stringify({type:'ORDER_STATUS',url:desiredUrl}),signal:AbortSignal.timeout(30000)});if(!r.ok)throw new Error(`СДЭК создание webhook: ${r.status}`);console.log('СДЭК: подписка ORDER_STATUS создана')}else console.log('СДЭК: нужная подписка ORDER_STATUS уже существует');
 NODE
 
 STATUS_NOAUTH=$(curl -ksS -o /dev/null -w '%{http_code}' "https://$DOMAIN/")
-if [[ "$STATUS_NOAUTH" != 401 ]]; then
-  echo "Ожидался HTTP 401 без авторизации, получен $STATUS_NOAUTH" >&2
-  exit 1
-fi
-
+[[ "$STATUS_NOAUTH" == 401 ]] || { echo "Ожидался HTTP 401 без авторизации, получен $STATUS_NOAUTH" >&2; exit 1; }
 echo "HTTPS работает; панель защищена Basic Auth; сервис amo активен."
 systemctl --no-pager --full status amo.service | sed -n '1,12p'
 
