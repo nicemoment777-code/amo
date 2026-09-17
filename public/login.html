@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>Вход · Snowbrick</title><link rel="stylesheet" href="/login.css"></head>
+<body>
+  <main class="login-shell">
+    <section class="intro" aria-label="Snowbrick — контроль доставки">
+      <a class="brand" href="/">snowbrick<span> / доставка</span></a>
+      <div class="intro-copy"><p class="eyebrow">ВАШЕ РАБОЧЕЕ ПРОСТРАНСТВО</p><h1>Каждый заказ.<br> Всё под контролем.</h1><p class="description">От отправки до получения — заказы, статусы и детали доставки в одном месте.</p>
+        <div class="route" aria-hidden="true"><span class="route-point"></span><span class="route-line"></span><span class="route-point filled"></span></div><div class="route-labels" aria-hidden="true"><span>Отправлено</span><span>Доставлено</span></div>
+      </div><p class="intro-footer">SNOWBRICK <span>Контроль доставки</span></p>
+    </section>
+    <section class="entry">
+      <div class="form-wrap"><span class="account-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-3a7 7 0 0 1 14 0v3"/></svg></span>
+        <h2>Вход в аккаунт</h2><p class="subtitle">Войдите, чтобы открыть ваши заказы.</p>
+        <form id="loginForm" method="post">
+          <label for="username">Логин</label><input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="64" placeholder="Введите логин" required autofocus>
+          <label for="password">Пароль</label><div class="password-field"><input id="password" name="password" type="password" autocomplete="current-password" maxlength="256" placeholder="Введите пароль" required><button type="button" id="togglePassword" aria-label="Показать пароль" aria-pressed="false">Показать</button></div>
+          <p id="error" role="alert" hidden></p><button class="submit" type="submit" id="submit">Войти <span aria-hidden="true">→</span></button>
+        </form><p class="entry-note">Доступ только для владельца аккаунта.</p>
+      </div><footer>Snowbrick · Личный кабинет</footer>
+    </section>
+  </main><script src="/login.js" defer></script>
+</body></html>

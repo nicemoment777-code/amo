@@ -3,6 +3,10 @@ name: Deploy production
 on:
   workflow_dispatch:
 
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -100,8 +104,6 @@ jobs:
           VPS_DOMAIN_FOR_WEBHOOK="$VPS_DOMAIN"
           EOF
           printf '%s' "$CDEK_ORDER_NUMBERS" > amo-order-numbers
-          printf 'admin' > amo-dashboard-user
-          openssl rand -base64 24 | tr -d '\n' > amo-dashboard-password
 
       - name: Upload release and server config
         shell: bash
@@ -113,7 +115,7 @@ jobs:
           set -Eeuo pipefail
           export SSHPASS="$VPS_SSH_PASSWORD"
           opts=(-o UserKnownHostsFile="$PWD/known_hosts" -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
-          sshpass -e scp "${opts[@]}" /tmp/amo-release.tgz amo.env.new amo-order-numbers amo-dashboard-user amo-dashboard-password ops/provision-server.sh "$VPS_SSH_USER@$VPS_SSH_HOST:/root/"
+          sshpass -e scp "${opts[@]}" /tmp/amo-release.tgz amo.env.new amo-order-numbers ops/provision-server.sh "$VPS_SSH_USER@$VPS_SSH_HOST:/root/"
 
       - name: Provision and deploy
         shell: bash
@@ -136,5 +138,9 @@ jobs:
         run: |
           set -Eeuo pipefail
           code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "https://$VPS_DOMAIN/")
-          [[ "$code" == 401 ]] || { echo "Expected protected dashboard (401), got $code"; exit 1; }
+          [[ "$code" == 302 ]] || { echo "Expected login redirect (302), got $code"; exit 1; }
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "https://$VPS_DOMAIN/login")
+          [[ "$code" == 200 ]] || { echo "Expected login page (200), got $code"; exit 1; }
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "https://$VPS_DOMAIN/api/state")
+          [[ "$code" == 401 ]] || { echo "Expected protected API (401), got $code"; exit 1; }
           echo "Production HTTPS endpoint is up and protected."
