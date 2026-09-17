@@ -14,21 +14,22 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      VPS_SSH_HOST: ${{ secrets.VPS_SSH_HOST }}
+      VPS_DOMAIN: ${{ secrets.REG_VPS_DOMAIN }}
     steps:
-      - name: Resolve server name
+      - name: Validate target
         shell: bash
         run: |
-          set -u
-          echo "DNS for 861659.cloud4box.ru"
-          getent ahostsv4 861659.cloud4box.ru || true
+          set -Eeuo pipefail
+          [[ -n "$VPS_SSH_HOST" ]] || { echo 'Missing VPS_SSH_HOST'; exit 1; }
 
       - name: Probe TCP ports
         shell: bash
         run: |
           set -u
-          host=185.77.219.91
           for port in 22 80 443; do
-            if timeout 8 bash -c "</dev/tcp/$host/$port" 2>/dev/null; then
+            if timeout 8 bash -c "</dev/tcp/$VPS_SSH_HOST/$port" 2>/dev/null; then
               echo "TCP $port: open"
             else
               echo "TCP $port: no response"
@@ -38,24 +39,18 @@ jobs:
       - name: Read SSH public host key only
         shell: bash
         run: |
-          set -u
-          rm -f /tmp/amo-hostkeys
-          timeout 20 ssh-keyscan -T 7 -t ed25519,rsa 185.77.219.91 > /tmp/amo-hostkeys 2>/tmp/ssh-keyscan.err || true
-          if [ -s /tmp/amo-hostkeys ]; then
-            echo "SSH host key received. Fingerprint(s):"
-            ssh-keygen -lf /tmp/amo-hostkeys
-          else
-            echo "SSH host key was not received."
-            cat /tmp/ssh-keyscan.err || true
-          fi
+          set -Eeuo pipefail
+          keyfile=$(mktemp)
+          trap 'rm -f "$keyfile"' EXIT
+          ssh-keyscan -T 7 -t ed25519 "$VPS_SSH_HOST" > "$keyfile" 2>/dev/null
+          test -s "$keyfile"
+          echo 'Observed key fingerprint (diagnostic only; does not change trusted keys):'
+          ssh-keygen -lf "$keyfile"
 
-      - name: Probe HTTP and HTTPS
+      - name: Probe configured domain
+        if: env.VPS_DOMAIN != ''
         shell: bash
         run: |
-          set -u
-          for url in http://861659.cloud4box.ru/ https://861659.cloud4box.ru/; do
-            echo "== $url =="
-            curl -kIsS --max-time 10 "$url" | sed -n '1,8p' || echo "No HTTP response"
-          done
-
-# Manual recheck requested after production access issue on 2026-09-17.
+          set -Eeuo pipefail
+          getent ahostsv4 "$VPS_DOMAIN"
+          curl -IsS --max-time 10 "https://$VPS_DOMAIN/" | sed -n '1,8p'

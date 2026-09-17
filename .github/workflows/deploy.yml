@@ -1,10 +1,6 @@
 name: Deploy production
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/deploy.yml
   workflow_dispatch:
 
 permissions:
@@ -32,15 +28,19 @@ jobs:
           VPS_SSH_HOST: ${{ secrets.VPS_SSH_HOST }}
           VPS_SSH_USER: ${{ secrets.VPS_SSH_USER }}
           VPS_SSH_PASSWORD: ${{ secrets.VPS_SSH_PASSWORD }}
-          VPS_DOMAIN: ${{ secrets.VPS_DOMAIN }}
+          VPS_DOMAIN: ${{ secrets.REG_VPS_DOMAIN }}
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
           CDEK_CLIENT_ID: ${{ secrets.AMO_ACCOUNT_ID }}
           CDEK_CLIENT_SECRET: ${{ secrets.AMO_PASSWORD }}
           CDEK_ORDER_NUMBERS: ${{ secrets.CDEK_ORDER_NUMBERS }}
         run: |
           set -Eeuo pipefail
-          for name in VPS_SSH_HOST VPS_SSH_USER VPS_SSH_PASSWORD VPS_DOMAIN CDEK_CLIENT_ID CDEK_CLIENT_SECRET CDEK_ORDER_NUMBERS; do
+          for name in VPS_SSH_HOST VPS_SSH_USER VPS_SSH_PASSWORD VPS_DOMAIN VPS_SSH_KNOWN_HOSTS CDEK_CLIENT_ID CDEK_CLIENT_SECRET CDEK_ORDER_NUMBERS; do
             [[ -n "${!name:-}" ]] || { echo "Missing secret: $name"; exit 1; }
           done
+          [[ "$VPS_DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || { echo 'Invalid domain'; exit 1; }
+          addresses=$(getent ahostsv4 "$VPS_DOMAIN" | awk '{print $1}' | sort -u)
+          [[ "$addresses" == "$VPS_SSH_HOST" ]] || { echo 'Domain must resolve only to the selected VPS IPv4 address'; exit 1; }
 
       - name: Install SSH helper
         run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
@@ -51,10 +51,11 @@ jobs:
           VPS_SSH_HOST: ${{ secrets.VPS_SSH_HOST }}
           VPS_SSH_USER: ${{ secrets.VPS_SSH_USER }}
           VPS_SSH_PASSWORD: ${{ secrets.VPS_SSH_PASSWORD }}
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
         run: |
           set -Eeuo pipefail
           umask 077
-          ssh-keyscan -T 10 -t ed25519,rsa "$VPS_SSH_HOST" > known_hosts
+          printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > known_hosts
           test -s known_hosts
           echo "Server host key fingerprint(s):"
           ssh-keygen -lf known_hosts
@@ -85,7 +86,7 @@ jobs:
         env:
           CDEK_CLIENT_ID: ${{ secrets.AMO_ACCOUNT_ID }}
           CDEK_CLIENT_SECRET: ${{ secrets.AMO_PASSWORD }}
-          VPS_DOMAIN: ${{ secrets.VPS_DOMAIN }}
+          VPS_DOMAIN: ${{ secrets.REG_VPS_DOMAIN }}
           CDEK_ORDER_NUMBERS: ${{ secrets.CDEK_ORDER_NUMBERS }}
         run: |
           set -Eeuo pipefail
@@ -120,7 +121,7 @@ jobs:
           VPS_SSH_HOST: ${{ secrets.VPS_SSH_HOST }}
           VPS_SSH_USER: ${{ secrets.VPS_SSH_USER }}
           VPS_SSH_PASSWORD: ${{ secrets.VPS_SSH_PASSWORD }}
-          VPS_DOMAIN: ${{ secrets.VPS_DOMAIN }}
+          VPS_DOMAIN: ${{ secrets.REG_VPS_DOMAIN }}
         run: |
           set -Eeuo pipefail
           export SSHPASS="$VPS_SSH_PASSWORD"
@@ -131,7 +132,7 @@ jobs:
       - name: Final external check
         shell: bash
         env:
-          VPS_DOMAIN: ${{ secrets.VPS_DOMAIN }}
+          VPS_DOMAIN: ${{ secrets.REG_VPS_DOMAIN }}
         run: |
           set -Eeuo pipefail
           code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "https://$VPS_DOMAIN/")

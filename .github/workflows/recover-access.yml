@@ -1,10 +1,6 @@
-name: Recover dashboard access
+name: Recover legacy Cloud4box dashboard access
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/recover-access.yml
   workflow_dispatch:
 
 permissions:
@@ -20,7 +16,7 @@ jobs:
       - name: External network probe
         shell: bash
         env:
-          VPS_SSH_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_SSH_HOST: ${{ secrets.LEGACY_CLOUD4BOX_SSH_HOST }}
           VPS_DOMAIN: ${{ secrets.VPS_DOMAIN }}
         run: |
           set -u
@@ -52,9 +48,9 @@ jobs:
       - name: Inspect and repair server access
         shell: bash
         env:
-          VPS_SSH_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_SSH_HOST: ${{ secrets.LEGACY_CLOUD4BOX_SSH_HOST }}
           VPS_SSH_USER: ${{ secrets.VPS_SSH_USER }}
-          VPS_SSH_PASSWORD: ${{ secrets.VPS_SSH_PASSWORD }}
+          VPS_SSH_PASSWORD: ${{ secrets.LEGACY_CLOUD4BOX_SSH_PASSWORD }}
           VPS_DOMAIN: ${{ secrets.VPS_DOMAIN }}
         run: |
           set -Eeuo pipefail
@@ -110,7 +106,7 @@ jobs:
         shell: bash
         env:
           VPS_DOMAIN: ${{ secrets.VPS_DOMAIN }}
-          VPS_SSH_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_SSH_HOST: ${{ secrets.LEGACY_CLOUD4BOX_SSH_HOST }}
         run: |
           set -Eeuo pipefail
           for host in "$VPS_DOMAIN" "$ALT_DOMAIN"; do

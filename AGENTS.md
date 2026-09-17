@@ -17,6 +17,6 @@ Preserve all order fields and cabinet snapshots during imports. Do not replace r
 
 ## Deployment status
 
-No successful SSH login or remote deployment has been confirmed. HTTPS and the CDEK webhook subscription are not configured. Do not describe the project as deployed until verified. Keep the dashboard bound to loopback until authenticated public access is implemented; exposing its current `/api/state` endpoint would expose order data.
+The current deployment target is REG Cloud VPS 194.58.102.218. Root SSH login and basic health checks succeeded on 2026-09-17. The new VPS does not yet have the app or HTTPS. Read docs/HANDOFF.md for current status and docs/LEGACY-CLOUD4BOX.md for the previous deployment on another server. Do not reuse the old Cloud4box domain or webhook subscription as if they belonged to the new server. Keep the dashboard bound to loopback until authenticated public access is implemented; exposing its current `/api/state` endpoint would expose order data.
 
 Run tests for source changes. Keep docs/HANDOFF.md current when deployment or integration status changes.

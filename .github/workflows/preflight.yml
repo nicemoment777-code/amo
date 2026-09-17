@@ -29,13 +29,13 @@ jobs:
           VPS_SSH_HOST: ${{ secrets.VPS_SSH_HOST }}
           VPS_SSH_USER: ${{ secrets.VPS_SSH_USER }}
           VPS_SSH_PASSWORD: ${{ secrets.VPS_SSH_PASSWORD }}
-          VPS_DOMAIN: ${{ secrets.VPS_DOMAIN }}
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
           CDEK_CLIENT_ID: ${{ secrets.AMO_ACCOUNT_ID }}
           CDEK_CLIENT_SECRET: ${{ secrets.AMO_PASSWORD }}
           CDEK_ORDER_NUMBERS: ${{ secrets.CDEK_ORDER_NUMBERS }}
         run: |
           set -Eeuo pipefail
-          for name in VPS_SSH_HOST VPS_SSH_USER VPS_SSH_PASSWORD VPS_DOMAIN CDEK_CLIENT_ID CDEK_CLIENT_SECRET CDEK_ORDER_NUMBERS; do
+          for name in VPS_SSH_HOST VPS_SSH_USER VPS_SSH_PASSWORD VPS_SSH_KNOWN_HOSTS CDEK_CLIENT_ID CDEK_CLIENT_SECRET CDEK_ORDER_NUMBERS; do
             [[ -n "${!name:-}" ]] || { echo "Missing secret: $name"; exit 1; }
           done
           echo "Existing deployment/CDEK secrets are present."
@@ -46,12 +46,13 @@ jobs:
           VPS_SSH_HOST: ${{ secrets.VPS_SSH_HOST }}
           VPS_SSH_USER: ${{ secrets.VPS_SSH_USER }}
           VPS_SSH_PASSWORD: ${{ secrets.VPS_SSH_PASSWORD }}
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
         run: |
           set -Eeuo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq sshpass
           umask 077
-          ssh-keyscan -T 10 -t ed25519,rsa "$VPS_SSH_HOST" > known_hosts
+          printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > known_hosts
           test -s known_hosts
           export SSHPASS="$VPS_SSH_PASSWORD"
           sshpass -e ssh -o UserKnownHostsFile="$PWD/known_hosts" -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
@@ -78,7 +79,7 @@ jobs:
           }
           console.log(`CDEK_AUTH_OK known_orders=${ok}/${numbers.length}`);
           if (failed.length) {
-            for (const x of failed) console.error(`${x.number}: ${x.message}`);
+            console.error(`CDEK orders unavailable: ${failed.length}`);
             process.exit(1);
           }
           NODE
