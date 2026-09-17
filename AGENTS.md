@@ -17,6 +17,6 @@ Preserve all order fields and cabinet snapshots during imports. Do not replace r
 
 ## Deployment status
 
-The current deployment target is REG Cloud VPS 194.58.102.218, primary domain snowbrick.ru (REG_VPS_DOMAIN). The primary domain and www.snowbrick.ru resolve to that IP through Google and Cloudflare DNS, checked on 2026-09-17. Root SSH login and basic health checks succeeded on 2026-09-17. The new VPS does not yet have the app or HTTPS. Read docs/HANDOFF.md for current status and docs/LEGACY-CLOUD4BOX.md for the previous deployment on another server. Do not reuse the old Cloud4box domain or webhook subscription as if they belonged to the new server. Keep the dashboard bound to loopback until authenticated public access is implemented; exposing its current `/api/state` endpoint would expose order data.
+Production runs on REG Cloud VPS 194.58.102.218 at https://snowbrick.ru (REG_VPS_DOMAIN). HTTPS, form login/logout, and 20 API orders with 20 cabinet snapshots were verified on 2026-09-17. www redirects to the primary domain. Read docs/HANDOFF.md and docs/AUTH.md. Keep Node bound to loopback and require authenticated public access; /api/state contains personal order data. Production authentication must fail closed when configuration is incomplete. The legacy Cloud4box server and its webhook subscription remain unchanged. Never put dashboard credentials in commits or logs.
 
 Run tests for source changes. Keep docs/HANDOFF.md current when deployment or integration status changes.
