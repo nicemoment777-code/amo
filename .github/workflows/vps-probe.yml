@@ -1,0 +1,59 @@
+name: VPS connectivity probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/vps-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Resolve server name
+        shell: bash
+        run: |
+          set -u
+          echo "DNS for 861659.cloud4box.ru"
+          getent ahostsv4 861659.cloud4box.ru || true
+
+      - name: Probe TCP ports
+        shell: bash
+        run: |
+          set -u
+          host=185.77.219.91
+          for port in 22 80 443; do
+            if timeout 8 bash -c "</dev/tcp/$host/$port" 2>/dev/null; then
+              echo "TCP $port: open"
+            else
+              echo "TCP $port: no response"
+            fi
+          done
+
+      - name: Read SSH public host key only
+        shell: bash
+        run: |
+          set -u
+          rm -f /tmp/amo-hostkeys
+          timeout 20 ssh-keyscan -T 7 -t ed25519,rsa 185.77.219.91 > /tmp/amo-hostkeys 2>/tmp/ssh-keyscan.err || true
+          if [ -s /tmp/amo-hostkeys ]; then
+            echo "SSH host key received. Fingerprint(s):"
+            ssh-keygen -lf /tmp/amo-hostkeys
+          else
+            echo "SSH host key was not received."
+            cat /tmp/ssh-keyscan.err || true
+          fi
+
+      - name: Probe HTTP and HTTPS
+        shell: bash
+        run: |
+          set -u
+          for url in http://861659.cloud4box.ru/ https://861659.cloud4box.ru/; do
+            echo "== $url =="
+            curl -kIsS --max-time 10 "$url" | sed -n '1,8p' || echo "No HTTP response"
+          done
