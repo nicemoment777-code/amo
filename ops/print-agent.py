@@ -5,7 +5,6 @@ import os
 import sys
 import time
 import subprocess
-import re
 import msvcrt
 from datetime import datetime, timezone
 from pathlib import Path
@@ -134,10 +133,6 @@ def main():
         item = next(value for value in data['items'] if value['id'] == selected)
         variant = ''
         if args.sku_only:
-            skus = [value.strip() for value in re.findall(r'\(([^()]*)\)', item['composition']) if value.strip()]
-            if not skus:
-                raise RuntimeError('В составе заказа нет артикулов в круглых скобках')
-            item = {**item, 'composition': '; '.join(skus)}
             variant = '-sku'
         target, image, details = prepare(item, for_print=bool(args.test_print), variant=variant)
         if args.test_print:
