@@ -2,6 +2,7 @@ import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {parseNumbers} from './cdek.mjs';
 import {validWebhookKey, webhookOrder} from './webhook.mjs';
+import {callbackPath} from './amocrm.mjs';
 
 const files = {'/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/colors.js': ['colors.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/login': ['login.html', 'text/html'], '/login.js': ['login.js', 'text/javascript'], '/login.css': ['login.css', 'text/css']};
 const publicPaths = new Set(['/login', '/login.js', '/login.css']);
@@ -13,7 +14,7 @@ async function readJson(req, limit) {
   catch { throw new Error('Некорректный JSON'); }
 }
 
-export function createApp({sync, auth, webhookSecret}) {
+export function createApp({sync, auth, webhookSecret, amocrm}) {
   const server = http.createServer(async (req, res) => {
     const json = (status, value) => { res.writeHead(status, {'Content-Type': 'application/json; charset=utf-8'}); res.end(JSON.stringify(value)); };
     const redirect = path => { res.writeHead(302, {Location: path}); res.end(); };
@@ -49,12 +50,33 @@ export function createApp({sync, auth, webhookSecret}) {
         return json(200, {ok: true});
       }
       const session = auth.session(req);
+      if (amocrm && path === callbackPath) {
+        if (req.method !== 'GET') return json(405, {error: 'Требуется GET'});
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        if (!params.size) return json(200, {ok: true, message: 'Адрес авторизации amoCRM готов. Начните подключение на странице /integrations/amocrm после входа.'});
+        if (!auth.enabled || !session) return redirect('/login');
+        try { await amocrm.callback(params, req.headers.cookie); return redirect('/integrations/amocrm?result=ok'); }
+        catch { return redirect('/integrations/amocrm?result=error'); }
+      }
       if (req.method === 'GET' && path === '/login' && (!auth.enabled || session)) return redirect('/');
       if (auth.enabled && !session && !publicPaths.has(path)) {
         if (path.startsWith('/api/')) return json(401, {error: 'Войдите в аккаунт'});
         return redirect('/login');
       }
       if (req.method === 'GET' && path === '/api/auth/session') return json(200, {enabled: auth.enabled, username: session?.username});
+      if (amocrm && (path.startsWith('/api/amocrm/') || path === '/integrations/amocrm' || path === '/amocrm.js')) {
+        if (!auth.enabled || !session) return json(403, {error: 'Для подключения amoCRM требуется вход на сайт'});
+        if (req.method === 'GET' && path === '/api/amocrm/status') return json(200, amocrm.status());
+        if (req.method === 'POST' && path === '/api/amocrm/configure') { await amocrm.configure(await readJson(req, 8192)); return json(200, {ok: true}); }
+        if (req.method === 'POST' && path === '/api/amocrm/start') return json(200, {url: amocrm.start(req.headers.cookie)});
+        if (req.method === 'POST' && path === '/api/amocrm/verify') return json(200, await amocrm.verify());
+        if (req.method === 'GET' && ['/integrations/amocrm', '/amocrm.js'].includes(path)) {
+          const script = path === '/amocrm.js';
+          const contents = await readFile(new URL('./public/' + (script ? 'amocrm.js' : 'amocrm.html'), import.meta.url));
+          res.writeHead(200, {'Content-Type': (script ? 'text/javascript' : 'text/html') + '; charset=utf-8'}); return res.end(contents);
+        }
+        return json(404, {error: 'Не найдено'});
+      }
       if (req.method === 'GET' && path === '/api/state') return json(200, sync.state());
       if (req.method === 'POST' && path.startsWith('/api/')) {
         const body = await readJson(req, 2e6);

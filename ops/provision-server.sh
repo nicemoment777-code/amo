@@ -111,6 +111,14 @@ server {
         proxy_pass http://127.0.0.1:3080;
     }
 
+    location = /integrations/amocrm/callback {
+        access_log off;
+        error_log /dev/null crit;
+        proxy_set_header Host 127.0.0.1:3080;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_pass http://127.0.0.1:3080;
+    }
+
     location / {
         proxy_set_header Host 127.0.0.1:3080;
         proxy_set_header X-Real-IP \$remote_addr;

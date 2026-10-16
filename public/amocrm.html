@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Подключение amoCRM — Снегострой</title><link rel="stylesheet" href="/login.css"><script src="/amocrm.js" defer></script></head>
+<body><main class="entry"><div class="form-wrap">
+<a href="/">← К заказам</a><h1>Подключение amoCRM</h1>
+<p>Аккаунт: snegostroy.amocrm.ru</p>
+<p>Укажите в форме интеграции эту ссылку для перенаправления:</p><p><strong id="redirectUri"></strong></p>
+<p>Сохраните интеграцию в amoCRM. На вкладке «Ключи и доступы» скопируйте ID и секретный ключ в поля ниже. Ключ хранится только на сервере и не отображается после сохранения.</p>
+<p id="status" role="status">Проверяем настройки…</p>
+<form id="settings" autocomplete="off">
+<label for="clientId">ID интеграции</label><input id="clientId" name="clientId" required maxlength="36" autocomplete="off">
+<label for="clientSecret">Секретный ключ интеграции</label><input id="clientSecret" name="clientSecret" type="password" required minlength="16" maxlength="4096" autocomplete="new-password">
+<button class="submit" type="submit">Сохранить ключи</button></form>
+<button class="submit" id="connect" type="button" disabled>Разрешить доступ в amoCRM</button>
+<button class="submit" id="verify" type="button" disabled>Проверить подключение</button>
+<p id="message" role="status"></p>
+<p>Эта страница настраивает доступ сервера к amoCRM. Подключение инструментов к Codex выполняется отдельно.</p>
+</div></main></body></html>

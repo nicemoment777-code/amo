@@ -10,10 +10,16 @@ const root = await request('/'); assert.equal(root.status, 302); assert.equal(ro
 assert.equal(root.headers.get('www-authenticate'), null);
 assert.equal((await request('/login')).status, 200);
 assert.equal((await request('/api/state')).status, 401);
+assert.equal((await request('/api/amocrm/status')).status, 401);
+assert.equal((await request('/integrations/amocrm/callback')).status, 200);
 const login = await request('/api/auth/login', {method: 'POST', headers: {'Content-Type': 'application/json', Origin: origin}, body: JSON.stringify({username: credentials.username, password: credentials.password})});
 assert.equal(login.status, 200);
 const setCookie = login.headers.get('set-cookie'); assert.match(setCookie, /; Secure/); assert.match(setCookie, /; HttpOnly/);
 const headers = {'Content-Type': 'application/json', Origin: origin, Cookie: setCookie.split(';')[0]};
+assert.equal((await request('/integrations/amocrm', {headers})).status, 200);
+const crmStatus = await request('/api/amocrm/status', {headers});
+assert.equal(crmStatus.status, 200);
+assert.equal((await crmStatus.json()).redirectUri, origin + '/integrations/amocrm/callback');
 const state = async () => { const response = await request('/api/state', {headers}); assert.equal(response.status, 200); return response.json(); };
 const waitForIdle = async () => {
   const deadline = Date.now() + 240000;
