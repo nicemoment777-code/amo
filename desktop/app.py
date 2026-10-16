@@ -80,7 +80,7 @@ def load_worker():
     return worker
 
 class App:
-    def __init__(self, root):
+    def __init__(self, root, smoke=False):
         self.root = root; self.running = False; self.busy = False; self.stop_event = threading.Event(); self.thread = None
         self.config = json.loads(CONFIG.read_text(encoding='utf-8')) if CONFIG.exists() else {}
         self.worker = load_worker()
@@ -106,11 +106,11 @@ class App:
         ttk.Button(buttons,text='Запустить',command=self.start).pack(side='left')
         ttk.Button(buttons,text='Остановить',command=self.stop).pack(side='left',padx=8)
         ttk.Button(buttons,text='Пробная печать',command=self.test).pack(side='left')
+        ttk.Button(buttons,text='История',command=lambda:os.startfile(str(self.worker.DATA))).pack(side='left',padx=8)
         ttk.Label(frame,text='Формат: этикетка 1:1, сверху 15 мм; только артикулы.\nГруппы печатаются по убыванию количества заявок.',wraplength=600).pack(anchor='w',pady=18)
         self.log= tk.Text(frame,height=9,wrap='word',state='disabled',font=('Segoe UI',10)); self.log.pack(fill='both',expand=True)
         root.protocol('WM_DELETE_WINDOW',self.close)
-        self.background(self.refresh_printers)
-        if self.config.get('enabled'): root.after(1000,self.start)
+        if not smoke: self.background(self.refresh_printers)
 
     def note(self,text):
         self.status.set(text); self.log.configure(state='normal'); self.log.insert('end',time.strftime('%H:%M:%S')+'  '+text+'\n'); self.log.see('end'); self.log.configure(state='disabled')
@@ -123,7 +123,10 @@ class App:
         try:
             data=json.loads(powershell("[Console]::OutputEncoding=[Text.Encoding]::UTF8; @(Get-CimInstance Win32_Printer | Select-Object -ExpandProperty Name) | ConvertTo-Json -Compress"))
             names=data if isinstance(data,list) else [data]
-            self.ui(lambda:self.printers.configure(values=names))
+            def loaded():
+                self.printers.configure(values=names)
+                if self.config.get('enabled'): self.start()
+            self.ui(loaded)
         except Exception: self.ui(lambda:self.note('Не удалось получить список принтеров. Проверьте драйвер Windows.'))
     def pair(self):
         if self.running or self.busy: return self.note('Сначала остановите печать и дождитесь завершения задания.')
@@ -147,7 +150,7 @@ class App:
     def start(self):
         if self.running: return
         if self.thread and self.thread.is_alive(): return self.note('Дождитесь завершения предыдущей проверки.')
-        if not self.printer.get(): return self.note('Выберите принтер Windows.')
+        if self.printer.get() not in self.printers['values']: return self.note('Выберите установленный принтер из списка Windows.')
         self.running=True; self.stop_event.clear(); self.save(); self.note('Автоматическая печать включена.')
         def loop():
             while not self.stop_event.is_set():
@@ -207,8 +210,12 @@ def self_test():
     from print_order import article_text,grouped_print_order
     assert article_text('Товар (A); Товар (B)')=='A; B'
     import zxingcpp, pypdf, reportlab, PIL
+    root=tk.Tk(); root.withdraw()
+    app=App(root,smoke=True); root.update_idletasks()
+    assert app.printers.winfo_exists() and app.log.winfo_exists()
+    root.destroy()
     out=Path(sys.argv[sys.argv.index('--self-test')+1])
-    out.write_text(json.dumps({'ok':True,'dpapi':True,'pdf':True,'barcode':True,'printerHelper':True}),encoding='utf-8')
+    out.write_text(json.dumps({'ok':True,'dpapi':True,'pdf':True,'barcode':True,'printerHelper':True,'windowControls':True}),encoding='utf-8')
 
 if __name__=='__main__':
     if '--self-test' in sys.argv: self_test()

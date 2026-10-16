@@ -51,8 +51,8 @@ async function devices() {
 document.querySelector('#pairDevice').addEventListener('submit', event => {
   event.preventDefault(); const form = event.currentTarget;
   run(form.querySelector('button'), async () => {
-    await api('devices/approve', {code:form.code.value, name:form.name.value});
-    form.code.value = ''; message.textContent = 'Компьютер подключён. Вернитесь в приложение Windows.'; await devices();
+    await api('devices/approve', {code:form.elements.namedItem('code').value, name:form.elements.namedItem('name').value});
+    form.elements.namedItem('code').value = ''; message.textContent = 'Компьютер подключён. Вернитесь в приложение Windows.'; await devices();
   });
 });
 devices().catch(error => { message.textContent = error.message; });
