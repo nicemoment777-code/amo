@@ -10,3 +10,5 @@ node_modules/
 *.p12
 *.pfx
 secrets/
+__pycache__/
+*.pyc

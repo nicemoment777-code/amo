@@ -87,6 +87,31 @@ test('background refresh waits until needed and backs off after provider errors'
   assert.equal(service.status().expiresAt, clock + 120000);
 });
 
+test('printing reads every page in the selected pipeline and extracts only required values', async t => {
+  const paths = [];
+  const {service} = await fixture(t, {fetcher: async url => {
+    if (url.endsWith('/oauth2/access_token')) return Response.json({access_token:'access',refresh_token:'refresh',expires_in:3600});
+    paths.push(new URL(url));
+    const page = new URL(url).searchParams.get('page');
+    return Response.json({_embedded:{leads:[{id:Number(page),created_at:123,pipeline_id:8604134,custom_fields_values:[
+      {field_name:'Состав заказа',values:[{value:'Товар 1 - 2; Товар 2 - 1'}]},
+      {field_name:'Этикетка ШК СДЭК',values:[{value:'https://files.crmkit.ru/private.pdf'}]}
+    ]}]},_links:page === '1' ? {next:{href:'https://evil.test/ignored'}} : {}});
+  }});
+  await service.configure(credentials);
+  await service.callback(params(service.start('session')), 'session');
+  const data = await service.printCandidates(123);
+  assert.equal(data.items.length, 2);
+  for (const url of paths) {
+    assert.equal(url.hostname, 'snegostroy.amocrm.ru');
+    assert.equal(url.searchParams.get('filter[pipeline_id]'), '8604134');
+    assert.equal(url.searchParams.get('filter[created_at][from]'), '123');
+  }
+  assert.equal(data.items[0].labelHost, 'files.crmkit.ru');
+  assert.equal(data.items[0].hasLabel, true);
+  assert.doesNotMatch(JSON.stringify(data.items), /private.pdf/);
+});
+
 test('HTTP protects setup and credentials, enforces Origin and clears callback query', async t => {
   const {service} = await fixture(t);
   const origin = 'https://example.test', password = 'test-only-password-1234';

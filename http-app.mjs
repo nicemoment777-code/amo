@@ -45,6 +45,8 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
           if (!Number.isSafeInteger(from) || from < 0) return json(400, {error: 'Некорректная дата'});
           return json(200, await amocrm.printCandidates(from, params.get('sample') === '1'));
         }
+        const itemId = path.match(/^\/api\/print-agent\/item\/(\d+)$/)?.[1];
+        if (itemId) return json(200, (await amocrm.printLabel(itemId)).item);
         const labelId = path.match(/^\/api\/print-agent\/label\/(\d+)$/)?.[1];
         if (labelId) {
           const result = await amocrm.printLabel(labelId);
