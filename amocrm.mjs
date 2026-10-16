@@ -45,7 +45,42 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
     if (stored.expiresAt <= now() + 60000) await exchange({grant_type: 'refresh_token', refresh_token: stored.refreshToken});
     return stored.accessToken;
   }
+  async function get(path) {
+    const token = await accessToken();
+    const response = await fetcher(`https://${account}${path}`, {headers: {Authorization: `Bearer ${token}`}, redirect: 'error', signal: AbortSignal.timeout(30000)});
+    if (response.status === 204) return {};
+    if (!response.ok) throw new Error(`Не удалось прочитать amoCRM (${response.status})`);
+    return response.json();
+  }
+  const fieldText = (lead, name) => (lead.custom_fields_values || []).filter(f => f.field_name?.trim().toLowerCase() === name.toLowerCase()).flatMap(f => f.values || []).map(v => v.value).filter(v => typeof v === 'string').join('\n').trim();
+  function printItem(lead) {
+    const label = fieldText(lead, 'Этикетка ШК СДЭК');
+    const composition = fieldText(lead, 'Состав заказа');
+    let labelHost = null;
+    try { labelHost = new URL(label).hostname; } catch {}
+    return {id: lead.id, createdAt: lead.created_at, pipelineId: lead.pipeline_id, composition, hasLabel: Boolean(labelHost), labelHost};
+  }
   return {
+    printCandidates: (from, sample = false) => serial(async () => {
+      const items = []; const names = new Set();
+      for (let page = 1; page <= 40; page++) {
+        const query = new URLSearchParams({'limit': '250', page: String(page), 'filter[pipeline_id]': '8604134', 'order[created_at]': sample ? 'desc' : 'asc'});
+        if (!sample) query.set('filter[created_at][from]', String(from));
+        const data = await get('/api/v4/leads?' + query);
+        const leads = data._embedded?.leads || [];
+        for (const lead of leads) {
+          for (const field of lead.custom_fields_values || []) names.add(field.field_name);
+          items.push(printItem(lead));
+        }
+        if (sample || !data._links?.next) return {items, fieldNames: [...names].filter(Boolean)};
+      }
+      throw new Error('Слишком много заявок. Проверка остановлена без пропуска страниц.');
+    }),
+    printLabel: id => serial(async () => {
+      const lead = await get('/api/v4/leads/' + id);
+      if (lead.pipeline_id !== 8604134) throw new Error('Заявка находится в другой воронке');
+      return {item: printItem(lead), url: fieldText(lead, 'Этикетка ШК СДЭК')};
+    }),
     status: () => ({account, redirectUri, configured: Boolean(stored.clientId && stored.clientSecret), connected: Boolean(stored.refreshToken), expiresAt: stored.expiresAt || null}),
     configure: body => serial(async () => {
       if (!redirectUri?.startsWith('https://')) throw new Error('Для подключения требуется настроенный HTTPS и вход на сайт');

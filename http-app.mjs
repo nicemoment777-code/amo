@@ -3,6 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {parseNumbers} from './cdek.mjs';
 import {validWebhookKey, webhookOrder} from './webhook.mjs';
 import {callbackPath} from './amocrm.mjs';
+import {createHash, timingSafeEqual} from 'node:crypto';
 
 const files = {'/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/colors.js': ['colors.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/login': ['login.html', 'text/html'], '/login.js': ['login.js', 'text/javascript'], '/login.css': ['login.css', 'text/css']};
 const publicPaths = new Set(['/login', '/login.js', '/login.css']);
@@ -14,7 +15,7 @@ async function readJson(req, limit) {
   catch { throw new Error('Некорректный JSON'); }
 }
 
-export function createApp({sync, auth, webhookSecret, amocrm}) {
+export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '', labelHosts = []}) {
   const server = http.createServer(async (req, res) => {
     const json = (status, value) => { res.writeHead(status, {'Content-Type': 'application/json; charset=utf-8'}); res.end(JSON.stringify(value)); };
     const redirect = path => { res.writeHead(302, {Location: path}); res.end(); };
@@ -34,6 +35,32 @@ export function createApp({sync, auth, webhookSecret, amocrm}) {
       const localOrigins = [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
       if (![`127.0.0.1:${port}`, `localhost:${port}`].includes(req.headers.host)) return json(403, {error: 'Недопустимый адрес'});
       if (req.method === 'GET' && path === '/healthz') return json(200, {ok: true});
+      if (path.startsWith('/api/print-agent/')) {
+        const bearer = req.headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1];
+        if (!auth.enabled || !amocrm || !/^[a-f0-9]{64}$/.test(printAgentHash) || !bearer || !timingSafeEqual(createHash('sha256').update(bearer).digest(), Buffer.from(printAgentHash, 'hex'))) return json(401, {error: 'Нет доступа к печати'});
+        if (req.method !== 'GET') return json(405, {error: 'Требуется GET'});
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        if (path === '/api/print-agent/leads') {
+          const from = Number(params.get('from'));
+          if (!Number.isSafeInteger(from) || from < 0) return json(400, {error: 'Некорректная дата'});
+          return json(200, await amocrm.printCandidates(from, params.get('sample') === '1'));
+        }
+        const labelId = path.match(/^\/api\/print-agent\/label\/(\d+)$/)?.[1];
+        if (labelId) {
+          const result = await amocrm.printLabel(labelId);
+          const url = new URL(result.url);
+          if (url.protocol !== 'https:' || url.port || url.username || url.password || !labelHosts.includes(url.hostname)) return json(400, {error: 'Домен этикетки ещё не разрешён для печати'});
+          const response = await fetch(url, {redirect: 'error', signal: AbortSignal.timeout(30000)});
+          if (!response.ok) return json(502, {error: 'Не удалось получить этикетку'});
+          const reader = response.body.getReader(); const chunks = []; let length = 0;
+          try { while (true) { const {done, value} = await reader.read(); if (done) break; length += value.length; if (length > 10e6) throw new Error('Слишком большой файл этикетки'); chunks.push(value); } }
+          finally { await reader.cancel(); }
+          const content = Buffer.concat(chunks);
+          if (!content.subarray(0, 5).equals(Buffer.from('%PDF-'))) return json(415, {error: 'Этикетка должна быть PDF'});
+          res.writeHead(200, {'Content-Type': 'application/pdf'}); return res.end(content);
+        }
+        return json(404, {error: 'Не найдено'});
+      }
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         const allowed = auth.enabled ? [auth.origin] : localOrigins;
         if ((auth.enabled || req.headers.origin) && !allowed.includes(req.headers.origin)) return json(403, {error: 'Недопустимый источник запроса'});

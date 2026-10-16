@@ -92,6 +92,8 @@ jobs:
           CDEK_CLIENT_SECRET: ${{ secrets.AMO_PASSWORD }}
           VPS_DOMAIN: ${{ secrets.REG_VPS_DOMAIN }}
           CDEK_ORDER_NUMBERS: ${{ secrets.CDEK_ORDER_NUMBERS }}
+          PRINT_AGENT_TOKEN_HASH: ${{ secrets.PRINT_AGENT_TOKEN_HASH }}
+          PRINT_LABEL_HOSTS: ${{ vars.PRINT_LABEL_HOSTS }}
         run: |
           set -Eeuo pipefail
           tar --exclude=.git --exclude=data --exclude=.env -czf /tmp/amo-release.tgz .
@@ -102,6 +104,8 @@ jobs:
           PORT=3080
           SYNC_INTERVAL_MINUTES=15
           VPS_DOMAIN_FOR_WEBHOOK="$VPS_DOMAIN"
+          PRINT_AGENT_TOKEN_HASH="$PRINT_AGENT_TOKEN_HASH"
+          PRINT_LABEL_HOSTS="$PRINT_LABEL_HOSTS"
           EOF
           printf '%s' "$CDEK_ORDER_NUMBERS" > amo-order-numbers
 

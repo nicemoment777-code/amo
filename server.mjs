@@ -13,5 +13,5 @@ const sync = await createSync(client, new URL('./data/', import.meta.url), proce
 const amocrm = await createAmoCrm(new URL('./data/amocrm.json', import.meta.url), auth.origin);
 const refreshTimer = setInterval(() => { amocrm.refreshDue().catch(() => {}); }, 60000);
 refreshTimer.unref();
-const server = createApp({sync, auth, webhookSecret: process.env.CDEK_WEBHOOK_SECRET, amocrm});
+const server = createApp({sync, auth, webhookSecret: process.env.CDEK_WEBHOOK_SECRET, amocrm, printAgentHash: process.env.PRINT_AGENT_TOKEN_HASH, labelHosts: (process.env.PRINT_LABEL_HOSTS || '').split(',').filter(Boolean)});
 server.listen(port, '127.0.0.1', () => { console.log(`CDEK dashboard: http://127.0.0.1:${port}`); sync.start(); });
