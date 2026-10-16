@@ -14,10 +14,10 @@ from contextlib import contextmanager
 from print_order import group_key, grouped_print_order
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / 'data' / 'printing'
+DATA = Path(os.environ.get('SNOWBRICK_DATA_DIR', str(ROOT / 'data' / 'printing')))
 ORIGIN = 'https://snowbrick.ru'
-PRINTER = '4BARCODE 3B-T361U'
-POPPLER = Path(os.environ.get('USERPROFILE', '')) / '.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/Library/bin/pdftoppm.exe'
+PRINTER = os.environ.get('SNOWBRICK_PRINTER', '4BARCODE 3B-T361U')
+POPPLER = Path(os.environ.get('SNOWBRICK_POPPLER', str(Path(os.environ.get('USERPROFILE', '')) / '.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/Library/bin/pdftoppm.exe')))
 PYTHON_VENDOR = DATA / 'vendor'
 sys.path.insert(0, str(PYTHON_VENDOR))
 
@@ -25,9 +25,9 @@ class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
 
-def request(path):
+def request(path, body=None):
     token = os.environ['PRINT_AGENT_TOKEN']
-    req = Request(ORIGIN + '/api/print-agent/' + path, headers={'Authorization': 'Bearer ' + token})
+    req = Request(ORIGIN + '/api/print-agent/' + path, data=json.dumps(body).encode() if body is not None else None, headers={'Authorization': 'Bearer ' + token, 'Content-Type':'application/json'})
     with build_opener(NoRedirect()).open(req, timeout=60) as response:
         content = response.read(10_000_001)
         if len(content) > 10_000_000:
@@ -64,7 +64,8 @@ def prepare(item, for_print=False, variant=''):
     return target, prefix.with_suffix('.png'), details
 
 def print_label(image, details):
-    result = subprocess.run(['pwsh', '-NoProfile', '-File', str(ROOT/'ops'/'print-image.ps1'), '-ImagePath',str(image),'-WidthMm',str(details['widthMm']),'-HeightMm',str(details['heightMm']),'-PrinterName',PRINTER],capture_output=True,text=True,encoding='utf-8',errors='replace')
+    script = Path(os.environ.get('SNOWBRICK_PRINT_SCRIPT', str(ROOT/'ops'/'print-image.ps1')))
+    result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy','Bypass','-File', str(script), '-ImagePath',str(image),'-WidthMm',str(details['widthMm']),'-HeightMm',str(details['heightMm']),'-PrinterName',PRINTER],capture_output=True,text=True,encoding='utf-8',errors='replace',creationflags=subprocess.CREATE_NO_WINDOW)
     if result.returncode or 'PRINT_SUBMITTED' not in result.stdout:
         raise RuntimeError('Драйвер не подтвердил отправку печати')
 
@@ -109,12 +110,18 @@ def run_once():
         key = str(item['id'])
         image, details = prepared[key]
         try:
+            claim = json.loads(request('claim', {'id':item['id']}))
+            if not claim['claimed']:
+                state['printed'][key] = {'at':int(time.time()), 'status':'reserved-on-server'}
+                del state['pending'][key]; atomic_json(state_path,state)
+                continue
             # Persist BEFORE handing off to spooler: interrupted/ambiguous jobs
             # are never automatically repeated, preventing duplicate labels.
             state['uncertain'][key] = {'at': int(time.time()), 'status': 'submitting'}
             del state['pending'][key]
             atomic_json(state_path, state)
             print_label(image, details)
+            request('complete', {'id':item['id']})
             state['printed'][key] = {'at': int(time.time()), 'status': 'submitted'}
             del state['uncertain'][key]
             count += 1

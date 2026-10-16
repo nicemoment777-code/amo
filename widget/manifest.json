@@ -1,0 +1,20 @@
+{
+  "widget": {
+    "name": "widget.name",
+    "description": "widget.description",
+    "short_description": "widget.short_description",
+    "version": "1.0.0",
+    "interface_version": 2,
+    "init_once": false,
+    "locale": ["ru"],
+    "installation": true,
+    "support": {"link": "https://snowbrick.ru/integrations/amocrm"}
+  },
+  "locations": ["settings", "lcard-1"],
+  "settings": {},
+  "tour": {
+    "is_tour": true,
+    "tour_images": {"ru": ["/images/tour_ru.png"]},
+    "tour_description": "widget.tour_description"
+  }
+}

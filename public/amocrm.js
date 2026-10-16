@@ -34,3 +34,25 @@ if (result) {
   history.replaceState(null, '', '/integrations/amocrm');
 }
 update().catch(error => { message.textContent = error.message; });
+async function devices() {
+  const data = await api('devices');
+  const root = document.querySelector('#devices'); root.replaceChildren();
+  for (const device of data.devices) {
+    const row = document.createElement('p');
+    row.textContent = device.name + (device.revoked ? ' — доступ отключён' : ' — подключён');
+    if (!device.revoked) {
+      const button = document.createElement('button'); button.textContent = 'Отключить доступ';
+      button.addEventListener('click', () => run(button, async () => { await api('devices/revoke', {id:device.id}); await devices(); }));
+      row.append(' ', button);
+    }
+    root.append(row);
+  }
+}
+document.querySelector('#pairDevice').addEventListener('submit', event => {
+  event.preventDefault(); const form = event.currentTarget;
+  run(form.querySelector('button'), async () => {
+    await api('devices/approve', {code:form.code.value, name:form.name.value});
+    form.code.value = ''; message.textContent = 'Компьютер подключён. Вернитесь в приложение Windows.'; await devices();
+  });
+});
+devices().catch(error => { message.textContent = error.message; });

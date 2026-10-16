@@ -15,7 +15,7 @@ async function readJson(req, limit) {
   catch { throw new Error('Некорректный JSON'); }
 }
 
-export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '', labelHosts = []}) {
+export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '', labelHosts = [], printDevices}) {
   const server = http.createServer(async (req, res) => {
     const json = (status, value) => { res.writeHead(status, {'Content-Type': 'application/json; charset=utf-8'}); res.end(JSON.stringify(value)); };
     const redirect = path => { res.writeHead(302, {Location: path}); res.end(); };
@@ -35,9 +35,21 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
       const localOrigins = [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
       if (![`127.0.0.1:${port}`, `localhost:${port}`].includes(req.headers.host)) return json(403, {error: 'Недопустимый адрес'});
       if (req.method === 'GET' && path === '/healthz') return json(200, {ok: true});
+      if (path === '/api/print-pair/start' || path === '/api/print-pair/poll') {
+        if (!auth.enabled || !printDevices) return json(404, {error: 'Не настроено подключение устройств'});
+        if (req.method !== 'POST') return json(405, {error: 'Требуется POST'});
+        const body = await readJson(req, 2048);
+        return json(200, path.endsWith('/start') ? printDevices.begin(body, req.headers['x-real-ip'] || req.socket.remoteAddress) : printDevices.poll(body));
+      }
       if (path.startsWith('/api/print-agent/')) {
         const bearer = req.headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1];
-        if (!auth.enabled || !amocrm || !/^[a-f0-9]{64}$/.test(printAgentHash) || !bearer || !timingSafeEqual(createHash('sha256').update(bearer).digest(), Buffer.from(printAgentHash, 'hex'))) return json(401, {error: 'Нет доступа к печати'});
+        const legacy = bearer && /^[a-f0-9]{64}$/.test(printAgentHash) && timingSafeEqual(createHash('sha256').update(bearer).digest(), Buffer.from(printAgentHash, 'hex'));
+        const owner = legacy ? 'legacy' : printDevices?.authorize(bearer);
+        if (!auth.enabled || !amocrm || !owner) return json(401, {error: 'Нет доступа к печати'});
+        if (printDevices && req.method === 'POST' && ['/api/print-agent/claim', '/api/print-agent/complete'].includes(path)) {
+          const body = await readJson(req, 1024);
+          return json(200, path.endsWith('/claim') ? await printDevices.claim(body.id, owner) : await printDevices.complete(body.id, owner));
+        }
         if (req.method !== 'GET') return json(405, {error: 'Требуется GET'});
         const params = new URL(req.url, 'http://localhost').searchParams;
         if (path === '/api/print-agent/leads') {
@@ -95,6 +107,9 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
       if (req.method === 'GET' && path === '/api/auth/session') return json(200, {enabled: auth.enabled, username: session?.username});
       if (amocrm && (path.startsWith('/api/amocrm/') || path === '/integrations/amocrm' || path === '/amocrm.js')) {
         if (!auth.enabled || !session) return json(403, {error: 'Для подключения amoCRM требуется вход на сайт'});
+        if (printDevices && req.method === 'GET' && path === '/api/amocrm/devices') return json(200, {devices: printDevices.list()});
+        if (printDevices && req.method === 'POST' && path === '/api/amocrm/devices/approve') return json(200, await printDevices.approve(await readJson(req, 2048)));
+        if (printDevices && req.method === 'POST' && path === '/api/amocrm/devices/revoke') return json(200, await printDevices.revoke((await readJson(req, 1024)).id));
         if (req.method === 'GET' && path === '/api/amocrm/status') return json(200, amocrm.status());
         if (req.method === 'POST' && path === '/api/amocrm/configure') { await amocrm.configure(await readJson(req, 8192)); return json(200, {ok: true}); }
         if (req.method === 'POST' && path === '/api/amocrm/start') return json(200, {url: amocrm.start(req.headers.cookie)});

@@ -14,5 +14,12 @@
 <button class="submit" id="connect" type="button" disabled>Разрешить доступ в amoCRM</button>
 <button class="submit" id="verify" type="button" disabled>Проверить подключение</button>
 <p id="message" role="status"></p>
+<h2>Компьютеры печати</h2>
+<p>В приложении Windows нажмите «Подключить», затем введите показанный код здесь. Разрешайте подключение только своего компьютера.</p>
+<form id="pairDevice" autocomplete="off">
+<label for="pairCode">Код из приложения</label><input id="pairCode" name="code" required maxlength="12">
+<label for="deviceName">Название компьютера</label><input id="deviceName" name="name" required maxlength="80" value="Компьютер печати">
+<button class="submit" type="submit">Разрешить печать этому компьютеру</button></form>
+<div id="devices"></div>
 <p>Эта страница настраивает доступ сервера к amoCRM. Подключение инструментов к Codex выполняется отдельно.</p>
 </div></main></body></html>
