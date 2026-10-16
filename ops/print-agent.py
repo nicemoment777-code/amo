@@ -37,7 +37,7 @@ def atomic_json(path, value):
     temp.write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
     os.replace(temp, path)
 
-def prepare(item):
+def prepare(item, for_print=False):
     from label_pdf import prepare_label
     source = DATA / f"label-{item['id']}-original.pdf"
     target = DATA / f"label-{item['id']}-print.pdf"
@@ -49,11 +49,16 @@ def prepare(item):
     subprocess.run([str(POPPLER), '-r', '203', '-singlefile', '-png', str(source), str(source.with_suffix(''))], check=True, capture_output=True)
     import zxingcpp
     from PIL import Image
-    original = {code.text for code in zxingcpp.read_barcodes(Image.open(source.with_suffix('.png')))}
-    result = {code.text for code in zxingcpp.read_barcodes(Image.open(prefix.with_suffix('.png')))}
+    original_codes = zxingcpp.read_barcodes(Image.open(source.with_suffix('.png')))
+    original = {code.text for code in original_codes}
+    result_codes = zxingcpp.read_barcodes(Image.open(prefix.with_suffix('.png')))
+    result = {code.text for code in result_codes}
     if not original or not original.issubset(result):
         raise RuntimeError('Проверка штрихкодов не пройдена; печать остановлена')
+    details['barcodeOverlap'] = any(min(code.position.top_left.y, code.position.top_right.y, code.position.bottom_left.y, code.position.bottom_right.y) < 15/25.4*203 for code in result_codes)
     atomic_json(prefix.with_suffix('.json'), {**details, 'barcodeCount': len(result)})
+    if for_print and details['barcodeOverlap']:
+        raise RuntimeError('Область состава перекрывает исходный штрихкод; печать остановлена')
     return target, prefix.with_suffix('.png'), details
 
 def print_label(image, details):
@@ -82,7 +87,7 @@ def run_once():
             if not item['composition'] or not item['hasLabel']:
                 waiting += 1
                 continue
-            _, image, details = prepare(item)
+            _, image, details = prepare(item, for_print=True)
             # Persist BEFORE handing off to spooler: interrupted/ambiguous jobs
             # are never automatically repeated, preventing duplicate labels.
             state['uncertain'][key] = {'at': int(time.time()), 'status': 'submitting'}
@@ -125,7 +130,7 @@ def main():
         selected = args.prepare or args.test_print
         data = json.loads((DATA/'sample.json').read_text(encoding='utf-8'))
         item = next(value for value in data['items'] if value['id'] == selected)
-        target, image, details = prepare(item)
+        target, image, details = prepare(item, for_print=bool(args.test_print))
         if args.test_print:
             receipt = DATA / f'test-{selected}.json'
             if receipt.exists():
