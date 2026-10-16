@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 from urllib.error import HTTPError
+from contextlib import contextmanager
+from print_order import group_key, grouped_print_order
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / 'data' / 'printing'
@@ -66,6 +68,16 @@ def print_label(image, details):
     if result.returncode or 'PRINT_SUBMITTED' not in result.stdout:
         raise RuntimeError('Драйвер не подтвердил отправку печати')
 
+@contextmanager
+def agent_lock():
+    with open(DATA/'agent.lock','a+b') as lock:
+        lock.seek(0); lock.write(b'0'); lock.flush(); lock.seek(0)
+        msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        try:
+            yield
+        finally:
+            lock.seek(0); msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+
 def run_once():
     state_path = DATA / 'state.json'
     if not state_path.exists():
@@ -80,7 +92,7 @@ def run_once():
             state['pending'][key] = item
     state['scanFrom'] = scan_started
     atomic_json(state_path, state)
-    count = 0; waiting = 0; errors = []
+    count = 0; waiting = 0; errors = []; prepared = {}; ready_items = []
     for key in list(state['pending']):
         try:
             item = json.loads(request('item/' + key))
@@ -88,6 +100,15 @@ def run_once():
                 waiting += 1
                 continue
             _, image, details = prepare(item, for_print=True)
+            prepared[key] = (image, details)
+            ready_items.append(item)
+        except Exception as error:
+            errors.append({'id':key,'type':type(error).__name__})
+    ordered = grouped_print_order(ready_items)
+    for item in ordered:
+        key = str(item['id'])
+        image, details = prepared[key]
+        try:
             # Persist BEFORE handing off to spooler: interrupted/ambiguous jobs
             # are never automatically repeated, preventing duplicate labels.
             state['uncertain'][key] = {'at': int(time.time()), 'status': 'submitting'}
@@ -100,11 +121,50 @@ def run_once():
             atomic_json(state_path, state)
         except Exception as error:
             errors.append({'id':key,'type':type(error).__name__})
-    summary = {'at': datetime.now(timezone.utc).isoformat(), 'submitted':count, 'waiting':waiting,'pending':len(state['pending']), 'uncertain':len(state['uncertain']), 'errors':errors}
+    summary = {'at': datetime.now(timezone.utc).isoformat(), 'submitted':count, 'waiting':waiting,'pending':len(state['pending']), 'uncertain':len(state['uncertain']), 'errors':errors, 'order':[item['id'] for item in ordered]}
     atomic_json(DATA/'last-run.json', summary)
     print(json.dumps(summary, ensure_ascii=True))
     if errors or state['uncertain']:
         sys.exit(2)
+
+def prepare_batch(count):
+    if count != 5:
+        raise ValueError('Пробная партия должна содержать ровно 5 заявок')
+    manifest = DATA/'test-batch-grouped.json'
+    if manifest.exists():
+        raise RuntimeError('Пробная партия уже подготовлена; используйте её существующий журнал')
+    sample = json.loads((DATA/'sample.json').read_text(encoding='utf-8'))
+    groups = {}
+    for item in sample['items']:
+        if not item['hasLabel'] or not item['composition'] or list(DATA.glob(f"test-{item['id']}*.json")):
+            continue
+        try:
+            groups.setdefault(group_key(item), []).append(item)
+        except ValueError:
+            continue
+    keys = sorted(groups, key=lambda key: (-len(groups[key]), key))
+    if len(keys) < 2 or len(groups[keys[0]]) < 3 or len(groups[keys[1]]) < 2:
+        raise RuntimeError('Не найдены две группы для пробной партии 3 + 2')
+    selected = groups[keys[0]][:3] + groups[keys[1]][:2]
+    records = []
+    for item in grouped_print_order(selected):
+        _, image, details = prepare(item, for_print=True, variant='-grouped')
+        records.append({'id':item['id'],'articles':list(group_key(item)),'image':str(image),'details':details,'status':'prepared'})
+    atomic_json(manifest, {'at':int(time.time()),'items':records})
+    print(json.dumps({'prepared':len(records),'order':[{'id':r['id'],'articles':r['articles']} for r in records]}, ensure_ascii=True))
+
+def print_batch():
+    manifest = DATA/'test-batch-grouped.json'
+    batch = json.loads(manifest.read_text(encoding='utf-8'))
+    if len(batch['items']) != 5 or any(record['status'] != 'prepared' for record in batch['items']):
+        raise RuntimeError('Партия уже отправлялась или её статус неоднозначен; автоматически не повторять')
+    for record in batch['items']:
+        record['status'] = 'submitting'
+        atomic_json(manifest, batch)
+        print_label(Path(record['image']), record['details'])
+        record['status'] = 'submitted'
+        atomic_json(manifest, batch)
+    print(json.dumps({'submitted':5,'order':[r['id'] for r in batch['items']]}))
 
 def main():
     DATA.mkdir(parents=True, exist_ok=True)
@@ -115,6 +175,8 @@ def main():
     parser.add_argument('--test-print', type=int)
     parser.add_argument('--run-once', action='store_true')
     parser.add_argument('--sku-only', action='store_true', help='Для пробного отпечатка оставить только значения в круглых скобках')
+    parser.add_argument('--prepare-batch', type=int)
+    parser.add_argument('--print-batch', action='store_true')
     args = parser.parse_args()
     if args.probe:
         data = json.loads(request('leads?from=0&sample=1'))
@@ -143,14 +205,15 @@ def main():
             print_label(image, details)
             atomic_json(receipt, {'id':selected,'status':'submitted','at':int(time.time())})
         print(json.dumps({'id':selected,'prepared':True,'submitted':bool(args.test_print),**details}))
+    elif args.prepare_batch:
+        with agent_lock():
+            prepare_batch(args.prepare_batch)
+    elif args.print_batch:
+        with agent_lock():
+            print_batch()
     elif args.run_once:
-        with open(DATA/'agent.lock','a+b') as lock:
-            lock.seek(0); lock.write(b'0'); lock.flush(); lock.seek(0)
-            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-            try:
-                run_once()
-            finally:
-                lock.seek(0); msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+        with agent_lock():
+            run_once()
 
 if __name__ == '__main__':
     try:

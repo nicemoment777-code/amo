@@ -1,6 +1,6 @@
 """Создать PDF с областью состава заказа 70 x 15 мм без перекрытия штрихкодов."""
 import io
-import re
+from print_order import article_text
 from pathlib import Path
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
@@ -8,12 +8,6 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 MM = 72 / 25.4
-
-def article_text(composition):
-    values = [value.strip() for value in re.findall(r'\(([^()]*)\)', composition) if value.strip()]
-    if not values:
-        raise ValueError('В составе заказа нет артикулов в круглых скобках')
-    return '; '.join(values)
 
 def wrap(text, font, size, width):
     lines = []
