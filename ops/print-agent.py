@@ -5,6 +5,7 @@ import os
 import sys
 import time
 import subprocess
+import re
 import msvcrt
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,10 +38,10 @@ def atomic_json(path, value):
     temp.write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
     os.replace(temp, path)
 
-def prepare(item, for_print=False):
+def prepare(item, for_print=False, variant=''):
     from label_pdf import prepare_label
     source = DATA / f"label-{item['id']}-original.pdf"
-    target = DATA / f"label-{item['id']}-print.pdf"
+    target = DATA / f"label-{item['id']}-print{variant}.pdf"
     source.write_bytes(request(f"label/{item['id']}"))
     details = prepare_label(source, target, item['composition'])
     prefix = target.with_suffix('')
@@ -114,6 +115,7 @@ def main():
     parser.add_argument('--prepare', type=int)
     parser.add_argument('--test-print', type=int)
     parser.add_argument('--run-once', action='store_true')
+    parser.add_argument('--sku-only', action='store_true', help='Для пробного отпечатка оставить только значения в круглых скобках')
     args = parser.parse_args()
     if args.probe:
         data = json.loads(request('leads?from=0&sample=1'))
@@ -130,9 +132,16 @@ def main():
         selected = args.prepare or args.test_print
         data = json.loads((DATA/'sample.json').read_text(encoding='utf-8'))
         item = next(value for value in data['items'] if value['id'] == selected)
-        target, image, details = prepare(item, for_print=bool(args.test_print))
+        variant = ''
+        if args.sku_only:
+            skus = [value.strip() for value in re.findall(r'\(([^()]*)\)', item['composition']) if value.strip()]
+            if not skus:
+                raise RuntimeError('В составе заказа нет артикулов в круглых скобках')
+            item = {**item, 'composition': '; '.join(skus)}
+            variant = '-sku'
+        target, image, details = prepare(item, for_print=bool(args.test_print), variant=variant)
         if args.test_print:
-            receipt = DATA / f'test-{selected}.json'
+            receipt = DATA / f'test-{selected}{variant}.json'
             if receipt.exists():
                 raise RuntimeError('Тест уже отправлялся; повторная печать требует отдельного решения')
             atomic_json(receipt, {'id':selected,'status':'submitting','at':int(time.time())})
