@@ -35,10 +35,11 @@ runtime = Path(os.environ['USERPROFILE'])/'.cache/codex-runtimes/codex-primary-r
 os.environ.setdefault('SNOWBRICK_POPPLER', str(BASE/'poppler'/'pdftoppm.exe' if getattr(sys,'frozen',False) else runtime/'native/poppler/Library/bin/pdftoppm.exe'))
 os.environ.setdefault('SNOWBRICK_PRINT_SCRIPT', str(BASE/'ops'/'print-image.ps1'))
 sys.path.insert(0, str(BASE/'ops'))
-from orders_model import MOSCOW, read_json, order_groups, parse_period, merge_catalog, receipt_statuses, sku_set, order_title
+from orders_model import MOSCOW, read_json, order_groups, parse_period, merge_catalog, receipt_statuses, sku_set, order_title, sku_color, print_tab_groups
 from orders_view import OrdersBoard, DatePicker, BG, INK, MUTED
 from printer_routing import load_routes, normalize_routes, choose_printer, PrinterRoutingError
-from printer_panel import PrinterPanel, checkbox_popup
+from printer_panel import PrinterPanel
+from article_buttons import ArticleButtons
 
 class Blob(ctypes.Structure):
     _fields_ = [('size', wintypes.DWORD), ('data', ctypes.POINTER(ctypes.c_byte))]
@@ -97,10 +98,10 @@ class App:
         try: self.routes=load_routes(self.worker.DATA)
         except PrinterRoutingError as e:
             self.routes={'enabled':True,'routes':[]}; routing_error=str(e)
-        self.card_filter=None; self.filter_checks={}
-        self.only_unprinted=tk.BooleanVar(value=False); self.carrier=tk.StringVar(value='Все доставки')
+        self.card_filter=None; self.carrier=tk.StringVar(value='Все доставки')
         self.selection_mode=False; self.selected_ids=set(); self.visible_cards=[]
         self.article_catalog=set(read_json(self.worker.DATA/'article-catalog.json',[]))
+        self.catalog=read_json(self.worker.DATA/'order-catalog.json',[])
         self.worker.POPPLER = Path(os.environ['SNOWBRICK_POPPLER'])
         self.token = os.environ.get('PRINT_AGENT_TOKEN') or device_token(); os.environ['PRINT_AGENT_TOKEN'] = self.token
         root.title(TITLE); root.geometry('1440x1000'); root.minsize(1120,850); root.configure(bg=BG)
@@ -109,6 +110,9 @@ class App:
         style.map('TButton',background=[('active','#e8edf8')])
         style.configure('Accent.TButton',background='#142346',foreground='white')
         style.map('Accent.TButton',background=[('active','#294576')])
+        style.configure('TNotebook',background=BG,borderwidth=0)
+        style.configure('TNotebook.Tab',padding=(22,12),font=('Segoe UI',12,'bold'))
+        style.map('TNotebook.Tab',background=[('selected','#142346')],foreground=[('selected','white')])
         style.configure('TFrame',background=BG); style.configure('TLabel',background=BG,foreground=INK)
         frame=ttk.Frame(root,padding=(28,20,28,12)); frame.pack(fill='x')
         title=ttk.Frame(frame); title.pack(fill='x')
@@ -119,7 +123,6 @@ class App:
         self.browse_actions=ttk.Frame(frame); self.browse_actions.pack(fill='x',pady=(0,10))
         self.select_button=ttk.Button(self.browse_actions,text='Выбрать несколько',command=self.toggle_selection)
         self.select_button.pack(side='left')
-        ttk.Checkbutton(self.browse_actions,text='Показать ненапечатанные стикеры',variable=self.only_unprinted,command=lambda:self.render(True)).pack(side='left',padx=16)
         ttk.Label(self.browse_actions,text='Доставка').pack(side='left',padx=(12,8))
         ttk.Combobox(self.browse_actions,textvariable=self.carrier,state='readonly',values=['Все доставки','СДЭК','Яндекс','Не указана'],width=17).pack(side='left')
         self.carrier.trace_add('write',lambda *_:self.render(True))
@@ -141,25 +144,30 @@ class App:
         ttk.Button(filters,text='Показать',style='Accent.TButton',command=lambda:self.reload(True)).pack(side='left')
         ttk.Button(filters,text='Сегодня',command=self.today).pack(side='left',padx=6)
         ttk.Button(filters,text='Последние 2 часа',command=self.last_two_hours).pack(side='left')
-        article_filters=ttk.Frame(frame); article_filters.pack(fill='x',pady=(10,0))
-        ttk.Label(article_filters,text='Карточки по артикулу').pack(side='left',padx=(0,10))
-        self.article_filter_button=ttk.Button(article_filters,text='Все артикулы ▾',width=35,command=self.article_filter_menu)
-        self.article_filter_button.pack(side='left')
-        ttk.Button(article_filters,text='Показать все',command=self.reset_article_filter).pack(side='left',padx=8)
-        ttk.Button(article_filters,text='Обновить список артикулов',command=self.refresh_articles).pack(side='left',padx=8)
+        article_heading=ttk.Frame(frame); article_heading.pack(fill='x',pady=(10,0))
+        ttk.Label(article_heading,text='Карточки по артикулу').pack(side='left')
+        ttk.Button(article_heading,text='Обновить артикулы',command=self.refresh_articles).pack(side='right')
+        self.article_filters=ArticleButtons(frame)
+        self.article_filters.pack(fill='x',pady=(4,0))
         self.printer_panel=PrinterPanel(frame,self.routes,self.known_skus,self.store_routes,self.note)
         self.printer_panel.pack(fill='x',pady=(14,0))
         summary=ttk.Frame(frame); summary.pack(fill='x',pady=(16,0))
         self.counts=tk.StringVar(value='Загружаем заказы…')
         ttk.Label(summary,textvariable=self.counts,font=('Segoe UI',11,'bold')).pack(side='left')
         ttk.Label(summary,text='✓ Отправлено     ! Нет подтверждения',foreground=MUTED).pack(side='right')
-        self.board=OrdersBoard(root,self.reprint,self.toggle_card); self.board.pack(fill='both',expand=True)
+        self.tabs=ttk.Notebook(root); self.tabs.pack(fill='both',expand=True,padx=28)
+        self.boards=[]
+        for label in ['✓ Напечатанные','! Ошибки / не напечатаны']:
+            page=ttk.Frame(self.tabs); self.tabs.add(page,text=label)
+            board=OrdersBoard(page,self.reprint,self.toggle_card); board.pack(fill='both',expand=True)
+            self.boards.append(board)
+        self.board=self.boards[0]
+        self.tabs.bind('<<NotebookTabChanged>>',self.tab_changed)
         footer=ttk.Frame(root,padding=(28,10)); footer.pack(fill='x')
         self.status=tk.StringVar(value='Выберите принтер в настройках. Проверка заявок каждые 5 минут.')
         ttk.Label(footer,textvariable=self.status,foreground=MUTED).pack(side='left')
         ttk.Button(footer,text='Обновить',command=lambda:self.reload()).pack(side='right')
         self.startup=tk.BooleanVar(value=self.config.get('startup',False))
-        self.catalog=read_json(self.worker.DATA/'order-catalog.json',[])
         self.settings_log=[]
         root.protocol('WM_DELETE_WINDOW',self.close)
         self.pump(); self.render()
@@ -196,7 +204,8 @@ class App:
                 skus=sorted({sku for item in items for sku in sku_set(item)})
                 self.worker.atomic_json(self.worker.DATA/'article-catalog.json',skus)
                 def loaded():
-                    self.article_catalog=set(skus); self.note(f'Список amoCRM обновлён: {len(skus)} артикулов. Заказы не отправлялись на печать.')
+                    self.article_catalog=set(skus); self.printer_panel.refresh_articles(); self.render()
+                    self.note(f'Список amoCRM обновлён: {len(skus)} артикулов. Заказы не отправлялись на печать.')
                 self.ui(loaded)
             except Exception: self.ui(lambda:self.note('Не удалось загрузить полный список артикулов. Сохранённый список доступен; повторите обновление позже.'))
             finally: self.busy=False; self.operation_lock.release()
@@ -216,22 +225,26 @@ class App:
     def select_all_visible(self):
         self.selected_ids={str(v['id']) for v in self.visible_cards if v['canPrint']}; self.render()
     def clear_selection(self): self.selected_ids.clear(); self.render()
-    def article_filter_menu(self):
-        try: start,end=self.period()
-        except ValueError as e: return self.note(str(e))
-        available={sku for item in self.catalog if start<=item.get('createdAt',0)<=end for sku in sku_set(item)}
-        unknown=any(not sku_set(item) for item in self.catalog if start<=item.get('createdAt',0)<=end)
-        # Preserve the active choice even when switching to a period without it.
-        if self.card_filter is not None: available.update(s for s in self.card_filter if s is not None)
-        values=sorted(available)+([None] if unknown or self.card_filter is not None and None in self.card_filter else [])
-        self.filter_checks={sku:tk.BooleanVar(value=self.card_filter is not None and sku in self.card_filter) for sku in values}
-        entries=[(sku if sku is not None else 'Без артикула',var,False,self.article_filter_changed) for sku,var in self.filter_checks.items()]
-        checkbox_popup(self.root,self.article_filter_button,entries,[('Показать все артикулы',self.reset_article_filter)])
-    def article_filter_changed(self):
-        self.card_filter={sku for sku,var in self.filter_checks.items() if var.get()}
+    def toggle_article_filter(self,sku):
+        selected=set(self.card_filter or ())
+        if sku in selected: selected.remove(sku)
+        else: selected.add(sku)
+        self.card_filter=selected
         self.render(True)
     def reset_article_filter(self):
-        self.card_filter=None; self.filter_checks={}; self.render(True)
+        self.card_filter=None; self.render(True)
+    def refresh_article_buttons(self):
+        values=set(self.known_skus())
+        if self.card_filter is not None: values.update(s for s in self.card_filter if s is not None)
+        choices=[((), 'Все артикулы', self.card_filter is None, True, ('#ffffff',INK), self.reset_article_filter)]
+        unknown=any(not sku_set(item) for item in self.catalog)
+        for sku in sorted(values)+([None] if unknown or self.card_filter and None in self.card_filter else []):
+            choices.append((sku,sku or 'Без артикула',self.card_filter is not None and sku in self.card_filter,
+                            True,sku_color((sku,)) if sku else sku_color(()),lambda s=sku:self.toggle_article_filter(s)))
+        self.article_filters.set_choices(choices)
+    def tab_changed(self,_=None):
+        self.board=self.boards[self.tabs.index('current')]
+        self.render(True)
     def store_routes(self,config,automatic=False):
         if self.busy:
             if not automatic: self.note('Дождитесь завершения текущего действия.')
@@ -253,22 +266,23 @@ class App:
         except ValueError as e: return self.note(str(e))
         state=read_json(self.worker.DATA/'state.json',{})
         carrier={'СДЭК':'cdek','Яндекс':'yandex','Не указана':'unknown'}.get(self.carrier.get())
-        groups=order_groups(self.catalog,start,end,state,receipt_statuses(self.worker.DATA),self.card_filter,self.only_unprinted.get(),carrier)
+        all_groups=order_groups(self.catalog,start,end,state,receipt_statuses(self.worker.DATA),self.card_filter,carrier=carrier)
+        grouped_tabs=[print_tab_groups(all_groups,True),print_tab_groups(all_groups,False)]
+        totals=[sum(len(g['items']) for g in groups) for groups in grouped_tabs]
+        self.tabs.tab(0,text=f'✓ Напечатанные · {totals[0]}')
+        self.tabs.tab(1,text=f'! Ошибки / не напечатаны · {totals[1]}')
+        active=self.tabs.index('current'); self.board=self.boards[active]; groups=grouped_tabs[active]
         cards=[item for group in groups for item in group['items']]
         self.visible_cards=cards
         self.selected_ids.intersection_update(str(v['id']) for v in cards if v['canPrint'])
         self.batch_button.configure(text=f'Печать выбранных ({len(self.selected_ids)})',state='normal' if self.selected_ids and not self.busy else 'disabled')
-        self.board.selection_mode=self.selection_mode; self.board.selected=set(self.selected_ids)
         confirmed=sum(v['confirmed'] for v in cards)
         self.counts.set(f'Заказов: {len(cards)}   ·   Групп: {len(groups)}   ·   Отправлено: {confirmed}   ·   Без подтверждения: {len(cards)-confirmed}')
-        if self.card_filter is None: label='Все артикулы ▾'
-        elif not self.card_filter: label='Артикулы не выбраны ▾'
-        elif len(self.card_filter)==1:
-            value=next(iter(self.card_filter)) or 'Без артикула'
-            label=(value if len(value)<=38 else value[:35]+'…')+' ▾'
-        else: label=f'Выбрано артикулов: {len(self.card_filter)} ▾'
-        self.article_filter_button.configure(text=label)
-        self.board.set_groups(groups,reset_scroll=reset,empty='Нет заказов для выбранных фильтров. Измените дату, доставку, артикулы или признак печати.')
+        self.refresh_article_buttons()
+        self.printer_panel.refresh_articles()
+        for index,board in enumerate(self.boards):
+            board.selection_mode=self.selection_mode; board.selected=set(self.selected_ids); board.enabled=not self.busy
+            board.set_groups(grouped_tabs[index],reset_scroll=reset,empty='Нет заказов для этой вкладки и выбранных фильтров. Измените период, доставку или артикулы.')
     def today(self):
         value=datetime.now(MOSCOW).strftime('%d.%m.%Y')
         self.day_from.set(value); self.day_to.set(value); self.time_from.set('00:00'); self.time_to.set('23:59'); self.reload(True)
@@ -471,13 +485,16 @@ def self_test():
     app.printer_panel.set_printers(['Self-test printer'])
     assert all('Self-test printer' in row['combo']['values'] for row in app.printer_panel.rows)
     timestamp=int(datetime.now(MOSCOW).timestamp())
-    samples=[{'id':90000000+n,'createdAt':timestamp,'composition':'(CHECK_SKU)','hasLabel':True} for n in range(8)]
+    samples=[{'id':90000000+n,'createdAt':timestamp,'composition':f'(CHECK_{n//3})','hasLabel':True} for n in range(8)]
     app.board.set_groups(order_groups(samples,timestamp,timestamp,{}))
     root.update_idletasks()
     assert len(app.board.hitboxes)==8
     assert len({round(value[0]) for value in app.board.hitboxes})==4
-    app.catalog=samples; app.card_filter={'CHECK_SKU'}; app.render()
-    assert len(app.board.hitboxes)==8
+    assert len({round(value[1]) for value in app.board.hitboxes[:4]})==1
+    app.catalog=samples; app.tabs.select(1); root.update(); app.render()
+    assert len(app.boards[0].groups)==0 and len(app.board.hitboxes)==8
+    app.article_filters.buttons['CHECK_0'].invoke()
+    assert len(app.board.hitboxes)==3
     app.card_filter={'NOT_SELECTED'}; app.render(); assert not app.board.hitboxes
     app.reset_article_filter(); assert len(app.board.hitboxes)==8
     app.toggle_selection(); app.select_all_visible()
@@ -488,6 +505,11 @@ def self_test():
     probe=PrinterPanel(root,{'enabled':False,'routes':[]},lambda:['CHECK_SKU'],lambda cfg,auto:saved.append(cfg) or True,lambda _:None)
     probe.set_printers(['Self-test printer'])
     probe.rows[1]['printer'].set('Self-test printer'); probe.printer_changed(1)
+    probe.rows[1]['articles'].buttons['CHECK_SKU'].invoke()
+    assert probe.selected(1)==['CHECK_SKU']
+    assert all('CHECK_SKU' not in row['articles'].buttons for i,row in enumerate(probe.rows) if i!=1)
+    probe.rows[1]['articles'].buttons['CHECK_SKU'].invoke()
+    assert all('CHECK_SKU' in row['articles'].buttons for row in probe.rows)
     assert probe.dirty and probe.save(True)
     restored=PrinterPanel(root,saved[-1],lambda:['CHECK_SKU'],lambda *_:True,lambda _:None)
     assert restored.rows[1]['printer'].get()=='Self-test printer'
@@ -496,7 +518,7 @@ def self_test():
     assert app.printers.winfo_exists() and app.log.winfo_exists()
     root.destroy()
     out=Path(sys.argv[sys.argv.index('--self-test')+1])
-    out.write_text(json.dumps({'ok':True,'dpapi':True,'pdf':True,'barcode':True,'printerHelper':True,'windowControls':True,'printerRows':4,'articleFilter':True,'printerPersistence':True,'multiSelect':True}),encoding='utf-8')
+    out.write_text(json.dumps({'ok':True,'dpapi':True,'pdf':True,'barcode':True,'printerHelper':True,'windowControls':True,'printerRows':4,'articleButtons':True,'continuousGrid':True,'printTabs':True,'articleFilter':True,'printerPersistence':True,'multiSelect':True}),encoding='utf-8')
 
 if __name__=='__main__':
     if '--self-test' in sys.argv: self_test()

@@ -74,17 +74,14 @@ class OrdersBoard(ttk.Frame):
         if not self.groups:
             c.create_text(width/2,110,text='Пока нет заказов',font=('Segoe UI',24,'bold'),fill=INK)
             c.create_text(width/2,154,text=self.empty,font=('Segoe UI',11),fill=MUTED)
+        index=0
         for group in self.groups:
-            label='; '.join(group['skus']) or 'Без артикула'
             color,fg=group['colors']
-            c.create_oval(left,y+6,left+10,y+16,fill=color,outline='')
-            c.create_text(left+20,y+10,anchor='w',text=self.fit(label,95),font=('Segoe UI',13,'bold'),fill=INK)
-            c.create_text(width-left,y+10,anchor='e',text=f"{len(group['items'])} заказов",font=('Segoe UI',10),fill=MUTED)
-            y+=36
-            for index,item in enumerate(group['items']):
+            for item in group['items']:
                 col=index%4; row=index//4; x=left+col*(cardw+gap); top=y+row*(cardh+gap)
                 self.card(x,top,cardw,cardh,item,color,fg)
-            y+=((len(group['items'])+3)//4)*(cardh+gap)+14
+                index+=1
+        y+=((index+3)//4)*(cardh+gap)
         c.configure(scrollregion=(0,0,width,max(y,c.winfo_height())))
     @staticmethod
     def fit(text, length):

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'ops'))
-from orders_model import order_groups, parse_period, sku_color, print_status, order_title
+from orders_model import order_groups, parse_period, sku_color, print_status, order_title, print_tab_groups
 from print_actions import manual_print, manual_batch
 from printer_routing import normalize_routes, choose_printer, load_routes, PrinterRoutingError
 from printer_panel import routes_from_rows, available_articles, EMPTY_PRINTER
@@ -48,14 +48,34 @@ class BoardTests(unittest.TestCase):
         values=[{'id':n,'createdAt':at,'composition':sku,'hasLabel':True} for n,at,sku in [
             (1,start,'(A)'),(2,end,'(B)'),(3,start+10,'(B)'),(4,end+1,'(A)')]]
         groups=order_groups(values,start,end,{'printed':{'2':{'status':'submitted'}}})
-        self.assertEqual([[v['id'] for v in g['items']] for g in groups],[[3,2],[1]])
-        self.assertEqual([v['confirmed'] for v in groups[0]['items']],[False,True])
+        by_sku={g['skus']:g['items'] for g in groups}
+        self.assertEqual([v['id'] for v in by_sku[('B',)]],[3,2])
+        self.assertEqual([v['confirmed'] for v in by_sku[('B',)]],[False,True])
+        self.assertEqual([g['colors'][0] for g in groups],sorted(g['colors'][0] for g in groups))
         with self.assertRaises(ValueError): parse_period('17.10.2026','18:00','17.10.2026','17:00')
 
     def test_uncertain_or_server_reservation_never_shows_green(self):
         self.assertFalse(print_status(1,{'printed':{'1':{'status':'reserved-on-server'}}})[0])
         self.assertFalse(print_status(1,{'printed':{'1':{'status':'submitted'}},'uncertain':{'1':{}}},{'1':'submitted'})[0])
         self.assertTrue(print_status(1,{}, {'1':'submitted'})[0])
+
+    def test_two_tabs_partition_orders_and_successful_retry_moves_card(self):
+        import copy
+        values=[{'id':n,'createdAt':5,'composition':sku,'hasLabel':True} for n,sku in
+                [(1,'(pink)'),(2,'(blue)'),(3,'(pink)'),(4,'(red)'),(5,'(blue)')]]
+        state={'printed':{'1':{'status':'submitted'},'2':{'status':'reserved-on-server'},
+                          '3':{'status':'submitted'}},'uncertain':{'3':{}}}
+        before=copy.deepcopy((values,state))
+        groups=order_groups(values,0,10,state)
+        printed=print_tab_groups(groups,True); issues=print_tab_groups(groups,False)
+        ids=lambda entries:{v['id'] for group in entries for v in group['items']}
+        self.assertEqual(ids(printed),{1}); self.assertEqual(ids(issues),{2,3,4,5})
+        self.assertEqual((values,state),before)
+        state['uncertain'].pop('3')
+        updated=order_groups(values,0,10,state)
+        self.assertEqual(ids(print_tab_groups(updated,True)),{1,3})
+        self.assertEqual(ids(print_tab_groups(updated,False)),{2,4,5})
+        self.assertEqual([g['colors'][0] for g in issues],sorted(g['colors'][0] for g in issues))
 
     def test_color_is_stable_and_multi_sku_card_is_not_duplicated(self):
         self.assertEqual(sku_color(('1-wsblue',)),sku_color(('1-wsblue',)))

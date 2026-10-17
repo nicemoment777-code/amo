@@ -98,10 +98,16 @@ def order_groups(items, start, end, state, receipts=None, selected_skus=None, on
         card['canPrint'] = bool(skus and item.get('hasLabel'))
         groups.setdefault(skus, []).append(card)
     ordered = []
-    for skus, cards in sorted(groups.items(), key=lambda pair: (-len(pair[1]), pair[0])):
+    for skus, cards in sorted(groups.items(), key=lambda pair: (sku_color(pair[0])[0], pair[0])):
         ordered.append({'skus': skus, 'colors': sku_color(skus),
                         'items': sorted(cards, key=lambda v: (v.get('createdAt', 0), v['id']))})
     return ordered
+
+
+def print_tab_groups(groups, confirmed):
+    """Зелёная вкладка только с подтверждением; красная включает неизвестные попытки."""
+    return [{**group, 'items': cards} for group in groups
+            if (cards := [item for item in group['items'] if item['confirmed'] == confirmed])]
 
 def parse_period(day_from, time_from, day_to, time_to):
     try:

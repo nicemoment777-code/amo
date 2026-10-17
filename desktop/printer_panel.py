@@ -1,25 +1,11 @@
-"""Постоянно видимые строки принтеров и списки артикулов с галочками."""
+"""Четыре строки принтеров с кнопками артикулов и сохранением назначений."""
 import tkinter as tk
 from tkinter import ttk
 from printer_routing import normalize_routes, PrinterRoutingError
+from article_buttons import ArticleButtons
+from orders_model import sku_color
 
 EMPTY_PRINTER='— Не выбран —'
-
-def checkbox_popup(parent, anchor, entries, commands=()):
-    menu=tk.Menu(parent,tearoff=False,font=('Segoe UI',11))
-    for label,callback in commands:
-        menu.add_command(label=label,command=callback)
-    if commands: menu.add_separator()
-    for label,variable,disabled,callback in entries:
-        menu.add_checkbutton(label=label,variable=variable,state='disabled' if disabled else 'normal',command=callback)
-    if not entries: menu.add_command(label='Артикулов в заявках пока нет',state='disabled')
-    def toggle(event):
-        index=menu.index('@'+str(event.y))
-        if index is not None and menu.type(index)=='checkbutton':
-            menu.invoke(index)
-            return 'break'
-    menu.bind('<ButtonRelease-1>',toggle)
-    menu.tk_popup(anchor.winfo_rootx(),anchor.winfo_rooty()+anchor.winfo_height())
 
 def routes_from_rows(rows, enabled=True):
     slots=[]
@@ -46,11 +32,12 @@ class PrinterPanel(ttk.Frame):
         table=ttk.Frame(self); table.pack(fill='x'); self.table=table
         ttk.Label(table,text='Принтер Windows',foreground='#737d94').grid(row=0,column=1,sticky='w',padx=8)
         ttk.Label(table,text='Артикулы для печати',foreground='#737d94').grid(row=0,column=2,sticky='w',padx=8)
-        table.columnconfigure(1,weight=1); table.columnconfigure(2,weight=2)
+        table.columnconfigure(2,weight=1)
         routes=config.get('slots',config.get('routes',[]))
         for index in range(max(4,len(routes))):
             route=routes[index] if index<len(routes) else {}
             self.add_row(route)
+        self.refresh_articles()
         self.description=tk.StringVar(value='Выбор принтеров и артикулов сохраняется автоматически. Занятые артикулы скрыты у остальных принтеров.')
         ttk.Label(self,textvariable=self.description,foreground='#737d94',wraplength=1200).pack(anchor='w',pady=(5,0))
     def add_row(self,route):
@@ -59,13 +46,13 @@ class PrinterPanel(ttk.Frame):
              'checks':{sku:tk.BooleanVar(value=True) for sku in route.get('skus',[])}}
         row['previous']=row['printer'].get()
         ttk.Label(self.table,text=str(index+1),width=2).grid(row=y,column=0,sticky='w')
-        combo=ttk.Combobox(self.table,textvariable=row['printer'],state='readonly',width=32)
+        combo=ttk.Combobox(self.table,textvariable=row['printer'],state='readonly',width=27)
         combo.grid(row=y,column=1,sticky='ew',padx=8,pady=3); row['combo']=combo
         combo.bind('<<ComboboxSelected>>',lambda _,i=index:self.printer_changed(i))
-        button=ttk.Button(self.table,width=48,command=lambda i=index:self.sku_menu(i))
-        button.grid(row=y,column=2,sticky='ew',padx=8,pady=3); row['button']=button
+        row['articles']=ArticleButtons(self.table)
+        row['articles'].grid(row=y,column=2,sticky='ew',padx=8,pady=3)
         ttk.Button(self.table,text='Очистить',command=lambda i=index:self.clear(i)).grid(row=y,column=3,padx=(8,0),pady=3)
-        self.rows.append(row); self.caption(index)
+        self.rows.append(row)
     def set_printers(self,names):
         self.names=list(names)
         for row in self.rows:
@@ -74,37 +61,37 @@ class PrinterPanel(ttk.Frame):
             row['combo'].configure(values=values)
     def selected(self,index):
         return sorted(sku for sku,var in self.rows[index]['checks'].items() if var.get())
-    def caption(self,index):
-        selected=self.selected(index)
-        text='; '.join(selected)
-        if len(text)>64: text=text[:61]+'…'
-        self.rows[index]['button'].configure(text=(text+'  ▾') if selected else 'Выбрать артикулы ▾')
+    def refresh_articles(self):
+        known=set(self.known_skus())
+        rows=[(r['printer'].get(),self.selected(i)) for i,r in enumerate(self.rows)]
+        for _,skus in rows: known.update(skus)
+        for index,row in enumerate(self.rows):
+            choices=[]
+            for sku in available_articles(known,rows,index):
+                var=row['checks'].setdefault(sku,tk.BooleanVar(value=False))
+                choices.append((sku,sku,var.get(),row['printer'].get()!=EMPTY_PRINTER,
+                                sku_color((sku,)),lambda i=index,s=sku:self.toggle_article(i,s)))
+            row['articles'].set_choices(choices)
     def printer_changed(self,index):
         row=self.rows[index]; name=row['printer'].get()
         if name!=EMPTY_PRINTER and any(n!=index and other['printer'].get()==name for n,other in enumerate(self.rows)):
             row['printer'].set(row['previous']); return self.on_note('Этот принтер уже выбран в другой строке.')
         if self.rows[index]['printer'].get()==EMPTY_PRINTER:
             return self.clear(index)
-        row['previous']=name; self.queue_save()
+        row['previous']=name; self.refresh_articles(); self.queue_save()
     def clear(self,index):
-        row=self.rows[index]; row['printer'].set(EMPTY_PRINTER); row['previous']=EMPTY_PRINTER; row['checks']={}; self.caption(index); self.queue_save()
+        row=self.rows[index]; row['printer'].set(EMPTY_PRINTER); row['previous']=EMPTY_PRINTER; row['checks']={}; self.refresh_articles(); self.queue_save()
     def queue_save(self):
         self.dirty=True; self.description.set('Сохраняем выбор…')
         if self.save_timer: self.after_cancel(self.save_timer)
         self.save_timer=self.after(180,lambda:self.save(True))
-    def article_changed(self,index):
-        self.caption(index); self.queue_save()
-    def sku_menu(self,index):
+    def toggle_article(self,index,sku):
         row=self.rows[index]
-        if row['printer'].get()==EMPTY_PRINTER: return self.on_note('Сначала укажите принтер в этой строке.')
-        known=set(self.known_skus())
-        for n in range(len(self.rows)): known.update(self.selected(n))
-        entries=[]
-        rows=[(r['printer'].get(),self.selected(i)) for i,r in enumerate(self.rows)]
-        for sku in available_articles(known,rows,index):
-            var=row['checks'].setdefault(sku,tk.BooleanVar(value=False))
-            entries.append((sku,var,False,lambda i=index:self.article_changed(i)))
-        checkbox_popup(self,row['button'],entries)
+        if row['printer'].get()==EMPTY_PRINTER: return
+        if any(n!=index and sku in self.selected(n) for n in range(len(self.rows))): return
+        var=row['checks'].get(sku)
+        if var is None: return
+        var.set(not var.get()); self.refresh_articles(); self.queue_save()
     def save(self,automatic=False):
         if self.save_timer: self.after_cancel(self.save_timer); self.save_timer=None
         try:
