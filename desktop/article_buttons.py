@@ -1,14 +1,16 @@
-"""Артикулы как видимые кнопки в одну строку с горизонтальной прокруткой."""
+"""Видимые кнопки артикулов в одну или несколько строк."""
 import tkinter as tk
 from tkinter import ttk
+from tkinter import font as tkfont
 
 BG = '#f4f6fb'
 
 
 class ArticleButtons(ttk.Frame):
-    def __init__(self, parent, empty='Артикулов в заявках пока нет'):
+    def __init__(self, parent, empty='Артикулов в заявках пока нет', rows=1):
         super().__init__(parent)
         self.empty = empty; self.buttons = {}; self.commands = {}; self.keys = None
+        self.rows=max(1,rows)
         self.columnconfigure(1, weight=1)
         self.left = ttk.Button(self, text='‹', width=2, command=lambda: self.move(-1))
         self.left.grid(row=0, column=0, sticky='ns', padx=(0, 4))
@@ -29,8 +31,18 @@ class ArticleButtons(ttk.Frame):
         if keys != self.keys:
             for child in self.content.winfo_children(): child.destroy()
             self.buttons = {}; self.keys = keys
-            for key in keys:
-                button = tk.Button(self.content, font=('Segoe UI', 10), relief='solid', bd=1,
+            font=tkfont.Font(family='Segoe UI',size=10)
+            widths=[font.measure('✓ '+value[1])+28 for value in choices]
+            row_count=min(self.rows,len(keys)); row=0; used=0
+            target=sum(widths)/max(1,row_count)
+            lines=[ttk.Frame(self.content) for _ in range(row_count)]
+            for line in lines: line.pack(anchor='w')
+            for index,key in enumerate(keys):
+                remaining=len(keys)-index; remaining_rows=row_count-row-1
+                if row<row_count-1 and used and (used+widths[index]>target or remaining==remaining_rows):
+                    row+=1; used=0
+                used+=widths[index]
+                button = tk.Button(lines[row], font=('Segoe UI', 10), relief='solid', bd=1,
                                    padx=10, pady=5, takefocus=True, cursor='hand2',
                                    command=lambda k=key: self.commands[k]())
                 button.pack(side='left', padx=(0, 6), pady=1)
