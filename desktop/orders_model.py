@@ -78,12 +78,15 @@ def receipt_statuses(folder):
             continue
     return result
 
-def order_groups(items, start, end, state, receipts=None):
+def order_groups(items, start, end, state, receipts=None, selected_skus=None):
     groups = {}
     for item in {str(v['id']): v for v in items}.values():
         if not start <= item.get('createdAt', 0) <= end:
             continue
         skus = sku_set(item)
+        if selected_skus is not None:
+            matches=bool(set(skus).intersection(selected_skus)) if skus else None in selected_skus
+            if not matches: continue
         confirmed, status = print_status(item['id'], state, receipts)
         card = {**item, 'skus': skus, 'confirmed': confirmed, 'statusText': status}
         card['canPrint'] = bool(skus and item.get('hasLabel'))

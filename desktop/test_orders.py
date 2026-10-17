@@ -8,8 +8,29 @@ sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'ops'))
 from orders_model import order_groups, parse_period, sku_color, print_status, order_title
 from print_actions import manual_print
 from printer_routing import normalize_routes, choose_printer, load_routes, PrinterRoutingError
+from printer_panel import routes_from_rows, EMPTY_PRINTER
 
 class BoardTests(unittest.TestCase):
+    def test_article_filter_matches_any_selected_sku_without_duplicate_cards(self):
+        import copy
+        values=[{'id':1,'createdAt':5,'composition':'(A); (B)','hasLabel':True},
+                {'id':2,'createdAt':5,'composition':'(C)','hasLabel':True},
+                {'id':3,'createdAt':5,'composition':'нет артикула','hasLabel':False}]
+        state={'printed':{'1':{'status':'submitted'}},'uncertain':{'2':{}}}
+        before=copy.deepcopy((values,state))
+        selected=order_groups(values,0,10,state,selected_skus={'A','B'})
+        self.assertEqual([v['id'] for group in selected for v in group['items']],[1])
+        self.assertEqual(selected[0]['skus'],('A','B'))
+        self.assertEqual(order_groups(values,0,10,state,selected_skus=set()),[])
+        unknown=order_groups(values,0,10,state,selected_skus={None})
+        self.assertEqual(unknown[0]['items'][0]['id'],3)
+        self.assertEqual((values,state),before)
+
+    def test_date_and_article_filters_apply_together(self):
+        values=[{'id':1,'createdAt':5,'composition':'(A)','hasLabel':True},
+                {'id':2,'createdAt':15,'composition':'(A)','hasLabel':True}]
+        selected=order_groups(values,10,20,{},selected_skus={'A'})
+        self.assertEqual(selected[0]['items'][0]['id'],2)
     def test_crm_order_number_is_distinct_from_internal_lead_id(self):
         self.assertEqual(order_title({'id':41954135,'orderNumber':'001048'}),'№ 001048')
         self.assertEqual(order_title({'id':41954135}),'amo 41954135')
@@ -78,6 +99,14 @@ class ManualPrintTests(unittest.TestCase):
             self.assertNotIn('complete',w.calls)
 
 class RoutingTests(unittest.TestCase):
+    def test_four_rows_ignore_blank_slots_and_validate_duplicate_ownership(self):
+        rows=[('P1',['A','B']),('P2',['C']),(EMPTY_PRINTER,[]),(EMPTY_PRINTER,[])]
+        config=routes_from_rows(rows)
+        self.assertEqual(config,{'enabled':True,'routes':[{'printer':'P1','skus':['A','B']},{'printer':'P2','skus':['C']}]})
+        with self.assertRaises(PrinterRoutingError): routes_from_rows([('P1',['A']),('P2',['A'])])
+        with self.assertRaises(PrinterRoutingError): routes_from_rows([(EMPTY_PRINTER,['A'])])
+        with self.assertRaises(PrinterRoutingError): routes_from_rows([('P1',['A']),('P1',['B'])])
+        self.assertEqual(routes_from_rows([(EMPTY_PRINTER,[])]*4),{'enabled':True,'routes':[]})
     def test_one_printer_can_have_multiple_articles_but_article_has_one_owner(self):
         routes={'routes':[{'printer':'P1','skus':['A','B']},{'printer':'P2','skus':['C']}]}
         self.assertEqual(choose_printer({'composition':'(A); (B)'},routes,'default'),'P1')
