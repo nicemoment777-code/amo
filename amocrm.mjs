@@ -1,5 +1,6 @@
 import {readFile, writeFile, rename, chmod} from 'node:fs/promises';
 import {randomBytes, createHash} from 'node:crypto';
+import {deliveryInfo} from './delivery-service.mjs';
 
 export const callbackPath = '/integrations/amocrm/callback';
 const account = 'snegostroy.amocrm.ru';
@@ -54,7 +55,7 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
   }
   const fieldText = (lead, name) => (lead.custom_fields_values || []).filter(f => f.field_name?.trim().toLowerCase() === name.toLowerCase()).flatMap(f => f.values || []).map(v => v.value).filter(v => typeof v === 'string').join('\n').trim();
   function printItem(lead) {
-    const label = fieldText(lead, 'Этикетка ШК СДЭК');
+    const {label, service:deliveryService} = deliveryInfo(lead);
     const composition = fieldText(lead, 'Состав заказа');
     let labelHost = null;
     try { labelHost = new URL(label).hostname; } catch {}
@@ -63,7 +64,7 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
       .flatMap(f => f.values || []).map(v => v.value)
       .find(value => (typeof value === 'string' && value.trim()) || (typeof value === 'number' && Number.isSafeInteger(value)));
     const orderNumber = orderValue('ORDERID') ?? orderValue('Номер заказа');
-    return {id: lead.id, orderNumber: orderNumber == null ? null : String(orderNumber).trim(), createdAt: lead.created_at, pipelineId: lead.pipeline_id, composition, hasLabel: Boolean(labelHost), labelHost};
+    return {id: lead.id, orderNumber: orderNumber == null ? null : String(orderNumber).trim(), deliveryService, createdAt: lead.created_at, pipelineId: lead.pipeline_id, composition, hasLabel: Boolean(labelHost), labelHost};
   }
   return {
     printCandidates: (from, sample = false) => serial(async () => {
@@ -84,7 +85,7 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
     printLabel: id => serial(async () => {
       const lead = await get('/api/v4/leads/' + id);
       if (lead.pipeline_id !== 8604134) throw new Error('Заявка находится в другой воронке');
-      return {item: printItem(lead), url: fieldText(lead, 'Этикетка ШК СДЭК')};
+      return {item: printItem(lead), url: deliveryInfo(lead).label};
     }),
     status: () => ({account, redirectUri, configured: Boolean(stored.clientId && stored.clientSecret), connected: Boolean(stored.refreshToken), expiresAt: stored.expiresAt || null}),
     configure: body => serial(async () => {
