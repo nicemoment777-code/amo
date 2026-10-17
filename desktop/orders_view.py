@@ -4,7 +4,7 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import ttk
 from tkinter import font as tkfont
-from orders_model import MOSCOW, order_title
+from orders_model import MOSCOW, order_title, delivery_service
 
 BG = '#f4f6fb'
 INK = '#111936'
@@ -44,9 +44,10 @@ class DatePicker:
         self.variable.set(f'{day:02}.{self.month:02}.{self.year}'); self.window.destroy()
 
 class OrdersBoard(ttk.Frame):
-    def __init__(self, parent, on_print):
+    def __init__(self, parent, on_print, on_select=None):
         super().__init__(parent)
         self.on_print = on_print; self.groups = []; self.hitboxes = []; self.enabled = True
+        self.on_select=on_select; self.selection_mode=False; self.selected=set(); self.selection_boxes=[]
         self.canvas = tk.Canvas(self,bg=BG,highlightthickness=0,bd=0)
         self.scroll = ttk.Scrollbar(self,orient='vertical',command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.scroll.set)
@@ -64,8 +65,10 @@ class OrdersBoard(ttk.Frame):
         if reset_scroll: self.canvas.yview_moveto(0)
     def set_enabled(self, enabled):
         self.enabled=enabled; self.draw()
+    def set_selection(self, mode, selected):
+        self.selection_mode=mode; self.selected=set(selected); self.draw()
     def draw(self):
-        c=self.canvas; c.delete('all'); self.hitboxes=[]
+        c=self.canvas; c.delete('all'); self.hitboxes=[]; self.selection_boxes=[]
         width=max(c.winfo_width(),1040); gap=18; left=28
         cardw=(width-2*left-3*gap)/4; cardh=278; y=18
         if not self.groups:
@@ -94,7 +97,14 @@ class OrdersBoard(ttk.Frame):
         number_font=23 if w>=285 else 19
         while number_font>13 and tkfont.Font(family='Segoe UI',size=number_font,weight='bold').measure(number)>w-98:
             number_font-=1
-        c.create_text(x+22,y+40,anchor='w',text=number,font=('Segoe UI',number_font,'bold'),fill=fg)
+        title_y=y+47 if self.selection_mode else y+40
+        c.create_text(x+22,title_y,anchor='w',text=number,font=('Segoe UI',number_font,'bold'),fill=fg)
+        if self.selection_mode:
+            checked=str(item['id']) in self.selected
+            c.create_rectangle(x+17,y+10,x+36,y+29,fill=INK if checked else '#ffffff',outline='#ffffff',width=2)
+            if checked: c.create_line(x+21,y+19,x+26,y+24,x+33,y+14,fill='white',width=3)
+            c.create_text(x+44,y+19,anchor='w',text='Выбрано' if checked else 'Выбрать',font=('Segoe UI',9),fill=fg)
+            if self.enabled and item['canPrint']: self.selection_boxes.append((x+12,y+6,x+120,y+32,item))
         cx=x+w-36; cy=y+34
         c.create_oval(cx-25,cy-25,cx+25,cy+25,fill='#ffffff',outline='')
         c.create_oval(cx-21,cy-21,cx+21,cy+21,fill='#00b85b' if item['confirmed'] else '#ff123b',outline='')
@@ -117,7 +127,9 @@ class OrdersBoard(ttk.Frame):
                 lines.append(remainder[:split]); remainder=remainder[split:].lstrip()
         if remainder: lines[-1]=self.fit(lines[-1],maxchars-1)+'…'
         c.create_text(x+22,y+100,anchor='nw',text='\n'.join(lines),font=('Segoe UI',14,'bold'),fill=fg)
-        c.create_text(x+22,y+161,anchor='w',text='Дата поступления · МСК',font=('Segoe UI',10),fill=secondary)
+        carrier={'cdek':'СДЭК','yandex':'Яндекс','unknown':'Доставка не указана'}[delivery_service(item)]
+        c.create_text(x+22,y+146,anchor='w',text=carrier,font=('Segoe UI',9,'bold'),fill=secondary)
+        c.create_text(x+22,y+164,anchor='w',text='Дата поступления · МСК',font=('Segoe UI',9),fill=secondary)
         date=datetime.fromtimestamp(item['createdAt'],MOSCOW).strftime('%d.%m.%Y · %H:%M')
         c.create_text(x+22,y+184,anchor='w',text=date,font=('Segoe UI',12,'bold'),fill=fg)
         status=item['statusText'] if item['canPrint'] else 'Нет этикетки или артикула'
@@ -135,8 +147,13 @@ class OrdersBoard(ttk.Frame):
     def hit(self,event):
         x,y=self.canvas.canvasx(event.x),self.canvas.canvasy(event.y)
         return next((v[4] for v in self.hitboxes if v[0]<=x<=v[2] and v[1]<=y<=v[3]),None)
+    def selection_hit(self,event):
+        x,y=self.canvas.canvasx(event.x),self.canvas.canvasy(event.y)
+        return next((v[4] for v in self.selection_boxes if v[0]<=x<=v[2] and v[1]<=y<=v[3]),None)
     def click(self,event):
+        selection=self.selection_hit(event)
+        if selection and self.on_select: return self.on_select(selection)
         item=self.hit(event)
         if item: self.on_print(item)
     def motion(self,event):
-        self.canvas.configure(cursor='hand2' if self.hit(event) else '')
+        self.canvas.configure(cursor='hand2' if self.hit(event) or self.selection_hit(event) else '')

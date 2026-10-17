@@ -6,11 +6,19 @@ import unittest
 
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'ops'))
 from orders_model import order_groups, parse_period, sku_color, print_status, order_title
-from print_actions import manual_print
+from print_actions import manual_print, manual_batch
 from printer_routing import normalize_routes, choose_printer, load_routes, PrinterRoutingError
-from printer_panel import routes_from_rows, EMPTY_PRINTER
+from printer_panel import routes_from_rows, available_articles, EMPTY_PRINTER
 
 class BoardTests(unittest.TestCase):
+    def test_unprinted_and_carrier_filters_compose_without_touching_history(self):
+        values=[{'id':1,'createdAt':5,'composition':'(A)','hasLabel':True,'deliveryService':'cdek'},
+                {'id':2,'createdAt':5,'composition':'(A)','hasLabel':True,'deliveryService':'yandex'},
+                {'id':3,'createdAt':5,'composition':'(A)','hasLabel':False,'deliveryService':'yandex'}]
+        state={'printed':{'1':{'status':'submitted'},'2':{'status':'submitted'}},'uncertain':{'2':{}}}
+        groups=order_groups(values,0,10,state,selected_skus={'A'},only_unprinted=True,carrier='yandex')
+        self.assertEqual([v['id'] for g in groups for v in g['items']],[2,3])
+        self.assertEqual(order_groups(values,0,10,state,only_unprinted=True,carrier='cdek'),[])
     def test_article_filter_matches_any_selected_sku_without_duplicate_cards(self):
         import copy
         values=[{'id':1,'createdAt':5,'composition':'(A); (B)','hasLabel':True},
@@ -57,23 +65,56 @@ class BoardTests(unittest.TestCase):
         self.assertEqual(len(groups[0]['items']),1)
 
 class FakeWorker:
-    def __init__(self,folder,fail=False): self.DATA=Path(folder); self.fail=fail; self.calls=[]
+    def __init__(self,folder,fail=False):
+        self.DATA=Path(folder); self.fail=fail; self.calls=[]; self.print_calls=[]; self.fail_id=None; self.lock_entries=0; self.locked=False
     def agent_lock(self):
-        from contextlib import nullcontext
-        return nullcontext()
+        from contextlib import contextmanager
+        @contextmanager
+        def lock():
+            assert not self.locked
+            self.locked=True; self.lock_entries+=1
+            try: yield
+            finally: self.locked=False
+        return lock()
     def request(self,path,body=None):
         self.calls.append(path)
-        if path.startswith('item/'): return json.dumps({'id':1,'hasLabel':True,'composition':'(A)'}).encode()
+        if path.startswith('item/'):
+            self.active_id=int(path.split('/')[1]); return json.dumps({'id':self.active_id,'hasLabel':True,'composition':'(A)'}).encode()
         return b'{"claimed":false}'
     def prepare(self,*args,**kwargs): return None,None,{}
     def select_printer(self,item): return 'Test printer'
     def atomic_json(self,path,value): path.write_text(json.dumps(value),encoding='utf-8')
     def print_label(self,*args):
         state=json.loads((self.DATA/'state.json').read_text())
-        assert '1' in state['uncertain']
-        if self.fail: raise RuntimeError('simulated driver error')
+        assert str(self.active_id) in state['uncertain'] and self.locked
+        if self.fail or self.fail_id==self.active_id: raise RuntimeError('simulated driver error')
+        self.print_calls.append(self.active_id)
 
 class ManualPrintTests(unittest.TestCase):
+    def test_successful_retry_changes_red_to_green_and_clears_uncertain_only_for_that_order(self):
+        with tempfile.TemporaryDirectory() as folder:
+            w=FakeWorker(folder)
+            w.atomic_json(w.DATA/'state.json',{'activatedAt':10,'scanFrom':20,'pending':{},'printed':{},'uncertain':{'1':{},'9':{}}})
+            self.assertFalse(print_status(1,json.loads((w.DATA/'state.json').read_text()))[0])
+            manual_print(w,1)
+            state=json.loads((w.DATA/'state.json').read_text())
+            self.assertTrue(print_status(1,state)[0]); self.assertEqual(set(state['uncertain']),{'9'})
+
+    def test_batch_prints_selected_once_and_stops_on_ambiguous_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            w=FakeWorker(folder); w.fail_id=2; notices=[]
+            items=[{'id':i,'createdAt':i,'composition':'(A)'} for i in (1,2,3,1)]
+            result=manual_batch(w,items,{'1':'Test printer','2':'Test printer','3':'Test printer'},notices.append)
+            self.assertEqual(result,{'submitted':['1'],'failed':'2','remaining':['3']})
+            self.assertEqual(w.print_calls,[1]); self.assertEqual(notices,['1']); self.assertEqual(w.lock_entries,1)
+            state=json.loads((w.DATA/'state.json').read_text())
+            self.assertIn('2',state['uncertain']); self.assertNotIn('3',state['printed']); self.assertNotIn('item/3',w.calls)
+
+    def test_batch_reports_each_success_for_immediate_badge_refresh(self):
+        with tempfile.TemporaryDirectory() as folder:
+            w=FakeWorker(folder); notices=[]
+            result=manual_batch(w,[{'id':i,'createdAt':i,'composition':'(A)'} for i in (2,1)],{'1':'Test printer','2':'Test printer'},notices.append)
+            self.assertEqual(w.print_calls,[1,2]); self.assertEqual(notices,['1','2']); self.assertIsNone(result['failed'])
     def test_changed_assignment_does_not_print_on_unconfirmed_printer(self):
         with tempfile.TemporaryDirectory() as folder:
             w=FakeWorker(folder)
@@ -102,11 +143,25 @@ class RoutingTests(unittest.TestCase):
     def test_four_rows_ignore_blank_slots_and_validate_duplicate_ownership(self):
         rows=[('P1',['A','B']),('P2',['C']),(EMPTY_PRINTER,[]),(EMPTY_PRINTER,[])]
         config=routes_from_rows(rows)
-        self.assertEqual(config,{'enabled':True,'routes':[{'printer':'P1','skus':['A','B']},{'printer':'P2','skus':['C']}]})
+        self.assertEqual(config['routes'],[{'printer':'P1','skus':['A','B']},{'printer':'P2','skus':['C']}])
+        self.assertEqual(len(config['slots']),4)
         with self.assertRaises(PrinterRoutingError): routes_from_rows([('P1',['A']),('P2',['A'])])
         with self.assertRaises(PrinterRoutingError): routes_from_rows([(EMPTY_PRINTER,['A'])])
         with self.assertRaises(PrinterRoutingError): routes_from_rows([('P1',['A']),('P1',['B'])])
-        self.assertEqual(routes_from_rows([(EMPTY_PRINTER,[])]*4),{'enabled':True,'routes':[]})
+        self.assertEqual(routes_from_rows([(EMPTY_PRINTER,[])]*4)['routes'],[])
+    def test_printer_without_articles_and_exact_slot_positions_survive_restart(self):
+        with tempfile.TemporaryDirectory() as folder:
+            config=routes_from_rows([(EMPTY_PRINTER,[]),('P2',[]),('P3',['A']),(EMPTY_PRINTER,[])])
+            (Path(folder)/'printer-routes.json').write_text(json.dumps(config),encoding='utf-8')
+            loaded=load_routes(folder)
+            self.assertEqual(loaded['slots'][1],{'printer':'P2','skus':[]})
+            self.assertEqual(loaded['slots'][2],{'printer':'P3','skus':['A']})
+            self.assertEqual(choose_printer({'composition':'(A)'},loaded,'default'),'P3')
+    def test_assigned_articles_are_hidden_from_other_printer_menus(self):
+        rows=[('P1',['A']),('P2',['B']),('',[]),('',[])]
+        self.assertEqual(available_articles(['A','B','C'],rows,0),['A','C'])
+        self.assertEqual(available_articles(['A','B','C'],rows,1),['B','C'])
+        self.assertEqual(available_articles(['A','B','C'],rows,3),['C'])
     def test_one_printer_can_have_multiple_articles_but_article_has_one_owner(self):
         routes={'routes':[{'printer':'P1','skus':['A','B']},{'printer':'P2','skus':['C']}]}
         self.assertEqual(choose_printer({'composition':'(A); (B)'},routes,'default'),'P1')

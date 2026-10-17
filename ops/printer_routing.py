@@ -7,6 +7,24 @@ class PrinterRoutingError(ValueError):
     pass
 
 def normalize_routes(config):
+    if isinstance(config,dict) and 'slots' in config:
+        if not isinstance(config['slots'],list): raise PrinterRoutingError('Некорректные строки принтеров')
+        slots=[]; selected_printers=set()
+        for slot in config['slots']:
+            if not isinstance(slot,dict): raise PrinterRoutingError('Некорректная строка принтера')
+            printer=slot.get('printer',''); skus=slot.get('skus',[])
+            if not isinstance(printer,str) or not isinstance(skus,list) or any(not isinstance(s,str) or not s.strip() for s in skus):
+                raise PrinterRoutingError('Некорректные артикулы принтера')
+            printer=printer.strip(); skus=sorted(set(s.strip() for s in skus))
+            if not printer and skus: raise PrinterRoutingError('Для артикулов не выбран принтер')
+            if printer and printer in selected_printers: raise PrinterRoutingError('Принтер уже выбран в другой строке')
+            if printer: selected_printers.add(printer)
+            slots.append({'printer':printer,'skus':skus})
+        derived=[slot for slot in slots if slot['printer'] and slot['skus']]
+        result=normalize_routes({'enabled':config.get('enabled',bool(derived)),'routes':derived})
+        if 'routes' in config and normalize_routes({'routes':config['routes']})['routes']!=result['routes']:
+            raise PrinterRoutingError('Назначения не совпадают со строками принтеров')
+        return {**result,'slots':slots}
     if not isinstance(config,dict) or not isinstance(config.get('routes',[]),list):
         raise PrinterRoutingError('Повреждены назначения принтеров. Проверьте верхнюю панель.')
     owners={}; routes=[]; printers=set()

@@ -23,7 +23,7 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler
 import webbrowser
 import winreg
 
-TITLE = 'Снегострой — печать СДЭК'
+TITLE = 'Снегострой — печать этикеток'
 ORIGIN = 'https://snowbrick.ru'
 BASE = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent))
 HOME = Path(os.environ.get('SNOWBRICK_HOME', str(Path(os.environ['LOCALAPPDATA'])/'SnowbrickPrinter')))
@@ -98,6 +98,9 @@ class App:
         except PrinterRoutingError as e:
             self.routes={'enabled':True,'routes':[]}; routing_error=str(e)
         self.card_filter=None; self.filter_checks={}
+        self.only_unprinted=tk.BooleanVar(value=False); self.carrier=tk.StringVar(value='Все доставки')
+        self.selection_mode=False; self.selected_ids=set(); self.visible_cards=[]
+        self.article_catalog=set(read_json(self.worker.DATA/'article-catalog.json',[]))
         self.worker.POPPLER = Path(os.environ['SNOWBRICK_POPPLER'])
         self.token = os.environ.get('PRINT_AGENT_TOKEN') or device_token(); os.environ['PRINT_AGENT_TOKEN'] = self.token
         root.title(TITLE); root.geometry('1440x1000'); root.minsize(1120,850); root.configure(bg=BG)
@@ -112,7 +115,19 @@ class App:
         ttk.Label(title,text='Заказы',font=('Segoe UI',30,'bold')).pack(side='left')
         ttk.Button(title,text='Настройки',command=self.settings).pack(side='right')
         ttk.Label(title,text='СНЕГОСТРОЙ',foreground=MUTED,font=('Segoe UI',11,'bold')).pack(side='right',padx=24)
-        ttk.Label(frame,text='Этикетки СДЭК  /  Группировка по артикулам',foreground=MUTED).pack(anchor='w',pady=(0,14))
+        ttk.Label(frame,text='Этикетки amoCRM  /  Группировка по артикулам',foreground=MUTED).pack(anchor='w',pady=(0,14))
+        self.browse_actions=ttk.Frame(frame); self.browse_actions.pack(fill='x',pady=(0,10))
+        self.select_button=ttk.Button(self.browse_actions,text='Выбрать несколько',command=self.toggle_selection)
+        self.select_button.pack(side='left')
+        ttk.Checkbutton(self.browse_actions,text='Показать ненапечатанные стикеры',variable=self.only_unprinted,command=lambda:self.render(True)).pack(side='left',padx=16)
+        ttk.Label(self.browse_actions,text='Доставка').pack(side='left',padx=(12,8))
+        ttk.Combobox(self.browse_actions,textvariable=self.carrier,state='readonly',values=['Все доставки','СДЭК','Яндекс','Не указана'],width=17).pack(side='left')
+        self.carrier.trace_add('write',lambda *_:self.render(True))
+        self.batch_controls=ttk.Frame(frame)
+        ttk.Button(self.batch_controls,text='Выбрать все в списке',command=self.select_all_visible).pack(side='left')
+        ttk.Button(self.batch_controls,text='Снять выделение',command=self.clear_selection).pack(side='left',padx=8)
+        self.batch_button=ttk.Button(self.batch_controls,text='Печать выбранных (0)',style='Accent.TButton',command=self.print_selected)
+        self.batch_button.pack(side='left')
         filters=ttk.Frame(frame); filters.pack(fill='x')
         now=datetime.now(MOSCOW); today=now.strftime('%d.%m.%Y')
         self.day_from=tk.StringVar(value=today); self.day_to=tk.StringVar(value=today)
@@ -131,13 +146,14 @@ class App:
         self.article_filter_button=ttk.Button(article_filters,text='Все артикулы ▾',width=35,command=self.article_filter_menu)
         self.article_filter_button.pack(side='left')
         ttk.Button(article_filters,text='Показать все',command=self.reset_article_filter).pack(side='left',padx=8)
+        ttk.Button(article_filters,text='Обновить список артикулов',command=self.refresh_articles).pack(side='left',padx=8)
         self.printer_panel=PrinterPanel(frame,self.routes,self.known_skus,self.store_routes,self.note)
         self.printer_panel.pack(fill='x',pady=(14,0))
         summary=ttk.Frame(frame); summary.pack(fill='x',pady=(16,0))
         self.counts=tk.StringVar(value='Загружаем заказы…')
         ttk.Label(summary,textvariable=self.counts,font=('Segoe UI',11,'bold')).pack(side='left')
         ttk.Label(summary,text='✓ Отправлено     ! Нет подтверждения',foreground=MUTED).pack(side='right')
-        self.board=OrdersBoard(root,self.reprint); self.board.pack(fill='both',expand=True)
+        self.board=OrdersBoard(root,self.reprint,self.toggle_card); self.board.pack(fill='both',expand=True)
         footer=ttk.Frame(root,padding=(28,10)); footer.pack(fill='x')
         self.status=tk.StringVar(value='Выберите принтер в настройках. Проверка заявок каждые 5 минут.')
         ttk.Label(footer,textvariable=self.status,foreground=MUTED).pack(side='left')
@@ -150,6 +166,7 @@ class App:
         if routing_error: self.note(routing_error)
         if not smoke:
             self.background(self.refresh_printers); self.reload(); root.after(300000,self.periodic_view)
+            if not self.article_catalog: root.after(600,lambda:self.refresh_articles(True))
 
     def note(self,text):
         self.status.set(text); self.settings_log.append(datetime.now(MOSCOW).strftime('%H:%M:%S')+'  '+text)
@@ -166,7 +183,39 @@ class App:
         self.root.after(70,self.pump)
     def background(self,callback): threading.Thread(target=callback,daemon=True).start()
     def known_skus(self):
-        return sorted({sku for item in self.catalog for sku in sku_set(item)})
+        return sorted(self.article_catalog|{sku for item in self.catalog for sku in sku_set(item)})
+    def refresh_articles(self,automatic=False):
+        if not self.operation_lock.acquire(False):
+            if automatic: self.root.after(1000,lambda:self.refresh_articles(True))
+            else: self.note('Дождитесь завершения текущего действия.')
+            return
+        self.busy=True; self.note('Загружаем список артикулов из заявок amoCRM…')
+        def work():
+            try:
+                items=json.loads(self.worker.request('leads?from=0'))['items']
+                skus=sorted({sku for item in items for sku in sku_set(item)})
+                self.worker.atomic_json(self.worker.DATA/'article-catalog.json',skus)
+                def loaded():
+                    self.article_catalog=set(skus); self.note(f'Список amoCRM обновлён: {len(skus)} артикулов. Заказы не отправлялись на печать.')
+                self.ui(loaded)
+            except Exception: self.ui(lambda:self.note('Не удалось загрузить полный список артикулов. Сохранённый список доступен; повторите обновление позже.'))
+            finally: self.busy=False; self.operation_lock.release()
+        self.background(work)
+    def toggle_selection(self):
+        self.selection_mode=not self.selection_mode
+        if self.selection_mode:
+            self.batch_controls.pack(fill='x',pady=(0,10),after=self.browse_actions)
+        else: self.batch_controls.pack_forget(); self.selected_ids.clear()
+        self.select_button.configure(text='Завершить выбор' if self.selection_mode else 'Выбрать несколько')
+        self.render()
+    def toggle_card(self,item):
+        key=str(item['id'])
+        if key in self.selected_ids: self.selected_ids.remove(key)
+        else: self.selected_ids.add(key)
+        self.render()
+    def select_all_visible(self):
+        self.selected_ids={str(v['id']) for v in self.visible_cards if v['canPrint']}; self.render()
+    def clear_selection(self): self.selected_ids.clear(); self.render()
     def article_filter_menu(self):
         try: start,end=self.period()
         except ValueError as e: return self.note(str(e))
@@ -183,25 +232,33 @@ class App:
         self.render(True)
     def reset_article_filter(self):
         self.card_filter=None; self.filter_checks={}; self.render(True)
-    def store_routes(self,config):
+    def store_routes(self,config,automatic=False):
         if self.busy:
-            self.note('Дождитесь завершения текущего действия.'); return False
+            if not automatic: self.note('Дождитесь завершения текущего действия.')
+            return False
         try:
             config=normalize_routes(config)
             with self.worker.agent_lock(): self.worker.atomic_json(self.worker.DATA/'printer-routes.json',config)
             self.routes=config; self.render()
-            self.note('Назначения сохранены. Артикулы закреплены за выбранными принтерами.')
+            if not automatic: self.note('Назначения сохранены. Артикулы закреплены за выбранными принтерами.')
             return True
-        except PrinterRoutingError as e: self.note(str(e))
-        except OSError: self.note('Сейчас выполняется печать. Дождитесь завершения и сохраните назначение ещё раз.')
+        except PrinterRoutingError as e:
+            if not automatic: self.note(str(e))
+        except OSError:
+            if not automatic: self.note('Сейчас выполняется печать. Дождитесь завершения и сохраните назначение ещё раз.')
         return False
     def period(self): return parse_period(self.day_from.get(),self.time_from.get(),self.day_to.get(),self.time_to.get())
     def render(self,reset=False):
         try: start,end=self.period()
         except ValueError as e: return self.note(str(e))
         state=read_json(self.worker.DATA/'state.json',{})
-        groups=order_groups(self.catalog,start,end,state,receipt_statuses(self.worker.DATA),self.card_filter)
+        carrier={'СДЭК':'cdek','Яндекс':'yandex','Не указана':'unknown'}.get(self.carrier.get())
+        groups=order_groups(self.catalog,start,end,state,receipt_statuses(self.worker.DATA),self.card_filter,self.only_unprinted.get(),carrier)
         cards=[item for group in groups for item in group['items']]
+        self.visible_cards=cards
+        self.selected_ids.intersection_update(str(v['id']) for v in cards if v['canPrint'])
+        self.batch_button.configure(text=f'Печать выбранных ({len(self.selected_ids)})',state='normal' if self.selected_ids and not self.busy else 'disabled')
+        self.board.selection_mode=self.selection_mode; self.board.selected=set(self.selected_ids)
         confirmed=sum(v['confirmed'] for v in cards)
         self.counts.set(f'Заказов: {len(cards)}   ·   Групп: {len(groups)}   ·   Отправлено: {confirmed}   ·   Без подтверждения: {len(cards)-confirmed}')
         if self.card_filter is None: label='Все артикулы ▾'
@@ -211,7 +268,7 @@ class App:
             label=(value if len(value)<=38 else value[:35]+'…')+' ▾'
         else: label=f'Выбрано артикулов: {len(self.card_filter)} ▾'
         self.article_filter_button.configure(text=label)
-        self.board.set_groups(groups,reset_scroll=reset,empty='Нет заказов для выбранных дат и артикулов. Измените фильтр или нажмите «Показать все».')
+        self.board.set_groups(groups,reset_scroll=reset,empty='Нет заказов для выбранных фильтров. Измените дату, доставку, артикулы или признак печати.')
     def today(self):
         value=datetime.now(MOSCOW).strftime('%d.%m.%Y')
         self.day_from.set(value); self.day_to.set(value); self.time_from.set('00:00'); self.time_to.set('23:59'); self.reload(True)
@@ -324,6 +381,7 @@ class App:
             self.busy=False; self.operation_lock.release(); self.ui(self.render)
     def reprint(self,item):
         if self.busy: return self.note('Дождитесь завершения текущего действия.')
+        if self.printer_panel.dirty and not self.printer_panel.save(): return
         self.worker.PRINTER=self.printer.get()
         try: actual_printer=self.worker.select_printer(item)
         except PrinterRoutingError as e: return self.note(str(e))
@@ -346,6 +404,40 @@ class App:
     def manual_print(self,item_id,expected_printer=None):
         from print_actions import manual_print
         manual_print(self.worker,item_id,expected_printer)
+    def print_selected(self):
+        if self.busy: return self.note('Дождитесь завершения текущего действия.')
+        if self.printer_panel.dirty and not self.printer_panel.save(): return
+        items=[v for v in self.visible_cards if str(v['id']) in self.selected_ids]
+        if not items: return
+        self.worker.PRINTER=self.printer.get()
+        try:
+            printers={str(item['id']):self.worker.select_printer(item) for item in items}
+            if any(name not in self.printer_names for name in printers.values()):
+                return self.note('Один из назначенных принтеров не установлен в Windows.')
+        except PrinterRoutingError as e: return self.note(str(e))
+        by_printer={name:sum(v==name for v in printers.values()) for name in set(printers.values())}
+        prompt=f'Напечатать выбранные этикетки: {len(items)} шт.?\nПо одному экземпляру каждой заявки.\n\n'+'\n'.join(f'{name}: {count}' for name,count in sorted(by_printer.items()))
+        if any(v['confirmed'] for v in items): prompt+='\n\nСреди выбранных есть уже отправленные этикетки: будет дополнительный экземпляр.'
+        if not messagebox.askyesno('Печать выбранных этикеток',prompt,parent=self.root): return
+        if not self.operation_lock.acquire(False): return
+        self.busy=True; self.board.set_enabled(False); self.render()
+        def submitted(key):
+            def update():
+                self.selected_ids.discard(key); self.render()
+            self.ui(update)
+        def work():
+            try:
+                from print_actions import manual_batch
+                result=manual_batch(self.worker,items,printers,submitted)
+                def completed():
+                    text=f"Отправлено этикеток: {len(result['submitted'])}."
+                    if result['failed']: text+=' Партия остановлена из-за ошибки. Проверьте статус и очередь; автоматического повтора нет.'
+                    self.note(text)
+                self.ui(completed)
+            except Exception: self.ui(lambda:self.note('Не удалось завершить партию. Проверьте статусы карточек и очередь принтера.'))
+            finally:
+                self.busy=False; self.operation_lock.release(); self.ui(lambda:(self.board.set_enabled(True),self.render()))
+        self.background(work)
     def autostart(self):
         try:
             with winreg.CreateKey(winreg.HKEY_CURRENT_USER,r'Software\Microsoft\Windows\CurrentVersion\Run') as key:
@@ -360,6 +452,7 @@ class App:
         except OSError: self.note('Не удалось изменить автозапуск Windows.')
     def close(self):
         if self.busy: return messagebox.showinfo(TITLE,'Дождитесь завершения текущего задания.')
+        if self.printer_panel.dirty and not self.printer_panel.save(): return messagebox.showinfo(TITLE,'Дождитесь сохранения выбранных принтеров и артикулов.')
         if self.running and not messagebox.askyesno(TITLE,'Закрыть приложение и остановить проверку до следующего запуска?'): return
         self.stop_event.set(); self.root.destroy()
 
@@ -387,11 +480,23 @@ def self_test():
     assert len(app.board.hitboxes)==8
     app.card_filter={'NOT_SELECTED'}; app.render(); assert not app.board.hitboxes
     app.reset_article_filter(); assert len(app.board.hitboxes)==8
+    app.toggle_selection(); app.select_all_visible()
+    assert len(app.selected_ids)==8 and len(app.board.selection_boxes)==8
+    app.clear_selection(); assert not app.selected_ids
+    app.toggle_selection()
+    saved=[]
+    probe=PrinterPanel(root,{'enabled':False,'routes':[]},lambda:['CHECK_SKU'],lambda cfg,auto:saved.append(cfg) or True,lambda _:None)
+    probe.set_printers(['Self-test printer'])
+    probe.rows[1]['printer'].set('Self-test printer'); probe.printer_changed(1)
+    assert probe.dirty and probe.save(True)
+    restored=PrinterPanel(root,saved[-1],lambda:['CHECK_SKU'],lambda *_:True,lambda _:None)
+    assert restored.rows[1]['printer'].get()=='Self-test printer'
+    probe.destroy(); restored.destroy()
     app.settings(); root.update_idletasks()
     assert app.printers.winfo_exists() and app.log.winfo_exists()
     root.destroy()
     out=Path(sys.argv[sys.argv.index('--self-test')+1])
-    out.write_text(json.dumps({'ok':True,'dpapi':True,'pdf':True,'barcode':True,'printerHelper':True,'windowControls':True,'printerRows':4,'articleFilter':True}),encoding='utf-8')
+    out.write_text(json.dumps({'ok':True,'dpapi':True,'pdf':True,'barcode':True,'printerHelper':True,'windowControls':True,'printerRows':4,'articleFilter':True,'printerPersistence':True,'multiSelect':True}),encoding='utf-8')
 
 if __name__=='__main__':
     if '--self-test' in sys.argv: self_test()
