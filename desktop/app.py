@@ -15,6 +15,8 @@ import sys
 import tempfile
 import threading
 import time
+import queue
+from datetime import datetime, timedelta
 import tkinter as tk
 from tkinter import ttk, messagebox
 from urllib.request import Request, build_opener, HTTPRedirectHandler
@@ -24,14 +26,18 @@ import winreg
 TITLE = 'Снегострой — печать СДЭК'
 ORIGIN = 'https://snowbrick.ru'
 BASE = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent))
-HOME = Path(os.environ['LOCALAPPDATA'])/'SnowbrickPrinter'
+HOME = Path(os.environ.get('SNOWBRICK_HOME', str(Path(os.environ['LOCALAPPDATA'])/'SnowbrickPrinter')))
 HOME.mkdir(parents=True, exist_ok=True)
 CONFIG = HOME/'settings.json'
 TOKEN = HOME/'device-key.bin'
-os.environ['SNOWBRICK_DATA_DIR'] = str(HOME/'printing')
-os.environ['SNOWBRICK_POPPLER'] = str(BASE/'poppler'/'pdftoppm.exe')
-os.environ['SNOWBRICK_PRINT_SCRIPT'] = str(BASE/'ops'/'print-image.ps1')
+os.environ.setdefault('SNOWBRICK_DATA_DIR', str(HOME/'printing'))
+runtime = Path(os.environ['USERPROFILE'])/'.cache/codex-runtimes/codex-primary-runtime/dependencies'
+os.environ.setdefault('SNOWBRICK_POPPLER', str(BASE/'poppler'/'pdftoppm.exe' if getattr(sys,'frozen',False) else runtime/'native/poppler/Library/bin/pdftoppm.exe'))
+os.environ.setdefault('SNOWBRICK_PRINT_SCRIPT', str(BASE/'ops'/'print-image.ps1'))
 sys.path.insert(0, str(BASE/'ops'))
+from orders_model import MOSCOW, read_json, order_groups, parse_period, merge_catalog, receipt_statuses, sku_set, order_title
+from orders_view import OrdersBoard, DatePicker, BG, INK, MUTED
+from printer_routing import load_routes, normalize_routes, choose_printer, PrinterRoutingError
 
 class Blob(ctypes.Structure):
     _fields_ = [('size', wintypes.DWORD), ('data', ctypes.POINTER(ctypes.c_byte))]
@@ -82,40 +88,201 @@ def load_worker():
 class App:
     def __init__(self, root, smoke=False):
         self.root = root; self.running = False; self.busy = False; self.stop_event = threading.Event(); self.thread = None
+        self.actions = queue.Queue(); self.operation_lock = threading.Lock(); self.settings_window = None
         self.config = json.loads(CONFIG.read_text(encoding='utf-8')) if CONFIG.exists() else {}
         self.worker = load_worker()
+        self.printer=tk.StringVar(value=self.config.get('printer','4BARCODE 3B-T361U')); self.printer_names=[]
+        routing_error=None
+        try: self.routes=load_routes(self.worker.DATA)
+        except PrinterRoutingError as e:
+            self.routes={'enabled':True,'routes':[]}; routing_error=str(e)
+        self.sku_checks={}
+        self.route_printer=tk.StringVar(value=self.printer.get())
         self.worker.POPPLER = Path(os.environ['SNOWBRICK_POPPLER'])
-        self.token = device_token(); os.environ['PRINT_AGENT_TOKEN'] = self.token
-        root.title(TITLE); root.geometry('680x590'); root.minsize(620,540)
-        style=ttk.Style(); style.theme_use('clam'); style.configure('.',font=('Segoe UI',10)); style.configure('TButton',padding=9)
-        frame=ttk.Frame(root,padding=24); frame.pack(fill='both',expand=True)
-        ttk.Label(frame,text='Печать этикеток СДЭК',font=('Segoe UI',20,'bold')).pack(anchor='w')
-        ttk.Label(frame,text='Личный кабинет snegostroy.amocrm.ru • каждые 5 минут').pack(anchor='w',pady=(4,18))
-        self.status=tk.StringVar(value='Выберите принтер и подключите компьютер')
-        ttk.Label(frame,textvariable=self.status,wraplength=600).pack(anchor='w',pady=(0,12))
-        pairrow=ttk.Frame(frame); pairrow.pack(fill='x')
-        ttk.Button(pairrow,text='Подключить компьютер',command=self.pair).pack(side='left')
-        ttk.Button(pairrow,text='Настройки в amoCRM',command=lambda:webbrowser.open(ORIGIN+'/integrations/amocrm')).pack(side='left',padx=8)
-        ttk.Label(frame,text='Принтер Windows').pack(anchor='w',pady=(20,4))
-        self.printer=tk.StringVar(value=self.config.get('printer','4BARCODE 3B-T361U'))
-        self.printers=ttk.Combobox(frame,textvariable=self.printer,state='readonly'); self.printers.pack(fill='x')
-        self.printers.bind('<<ComboboxSelected>>',lambda _:self.save())
+        self.token = os.environ.get('PRINT_AGENT_TOKEN') or device_token(); os.environ['PRINT_AGENT_TOKEN'] = self.token
+        root.title(TITLE); root.geometry('1440x940'); root.minsize(1120,720); root.configure(bg=BG)
+        style=ttk.Style(); style.theme_use('clam'); style.configure('.',font=('Segoe UI',10))
+        style.configure('TButton',padding=(12,8),background='#ffffff',foreground=INK,borderwidth=0)
+        style.map('TButton',background=[('active','#e8edf8')])
+        style.configure('Accent.TButton',background='#142346',foreground='white')
+        style.map('Accent.TButton',background=[('active','#294576')])
+        style.configure('TFrame',background=BG); style.configure('TLabel',background=BG,foreground=INK)
+        frame=ttk.Frame(root,padding=(28,20,28,12)); frame.pack(fill='x')
+        title=ttk.Frame(frame); title.pack(fill='x')
+        ttk.Label(title,text='Заказы',font=('Segoe UI',30,'bold')).pack(side='left')
+        ttk.Button(title,text='Настройки',command=self.settings).pack(side='right')
+        ttk.Label(title,text='СНЕГОСТРОЙ',foreground=MUTED,font=('Segoe UI',11,'bold')).pack(side='right',padx=24)
+        ttk.Label(frame,text='Этикетки СДЭК  /  Группировка по артикулам',foreground=MUTED).pack(anchor='w',pady=(0,14))
+        filters=ttk.Frame(frame); filters.pack(fill='x')
+        now=datetime.now(MOSCOW); today=now.strftime('%d.%m.%Y')
+        self.day_from=tk.StringVar(value=today); self.day_to=tk.StringVar(value=today)
+        self.time_from=tk.StringVar(value='00:00'); self.time_to=tk.StringVar(value='23:59')
+        for label,day,clock in [('С',self.day_from,self.time_from),('По',self.day_to,self.time_to)]:
+            ttk.Label(filters,text=label).pack(side='left',padx=(0,8))
+            ttk.Entry(filters,textvariable=day,width=11).pack(side='left')
+            ttk.Button(filters,text='▦',width=2,command=lambda v=day:DatePicker(root,v)).pack(side='left',padx=(2,6))
+            ttk.Spinbox(filters,textvariable=clock,values=[f'{h:02}:{m:02}' for h in range(24) for m in (0,30)],width=6,wrap=True).pack(side='left',padx=(0,16))
+        ttk.Label(filters,text='МСК',foreground=MUTED).pack(side='left',padx=(0,12))
+        ttk.Button(filters,text='Показать',style='Accent.TButton',command=lambda:self.reload(True)).pack(side='left')
+        ttk.Button(filters,text='Сегодня',command=self.today).pack(side='left',padx=6)
+        ttk.Button(filters,text='Последние 2 часа',command=self.last_two_hours).pack(side='left')
+        routing=ttk.Frame(frame); routing.pack(fill='x',pady=(18,0))
+        ttk.Label(routing,text='Печать по принтерам',font=('Segoe UI',12,'bold')).pack(anchor='w',pady=(0,6))
+        choices=ttk.Frame(routing); choices.pack(fill='x')
+        ttk.Label(choices,text='Принтер').pack(side='left',padx=(0,8))
+        self.route_printers=ttk.Combobox(choices,textvariable=self.route_printer,state='readonly',width=32)
+        self.route_printers.pack(side='left'); self.route_printers.bind('<<ComboboxSelected>>',lambda _:self.route_selected())
+        self.sku_button=ttk.Button(choices,text='Выбрать артикулы ▾',command=self.sku_menu,width=29)
+        self.sku_button.pack(side='left',padx=8)
+        ttk.Button(choices,text='Сохранить назначение',style='Accent.TButton',command=self.save_route).pack(side='left')
+        ttk.Button(choices,text='Снять назначение',command=self.remove_route).pack(side='left',padx=8)
+        self.route_description=tk.StringVar()
+        ttk.Label(routing,textvariable=self.route_description,foreground=MUTED,wraplength=1250).pack(anchor='w',pady=(6,0))
+        summary=ttk.Frame(frame); summary.pack(fill='x',pady=(16,0))
+        self.counts=tk.StringVar(value='Загружаем заказы…')
+        ttk.Label(summary,textvariable=self.counts,font=('Segoe UI',11,'bold')).pack(side='left')
+        ttk.Label(summary,text='✓ Отправлено     ! Нет подтверждения',foreground=MUTED).pack(side='right')
+        self.board=OrdersBoard(root,self.reprint); self.board.pack(fill='both',expand=True)
+        footer=ttk.Frame(root,padding=(28,10)); footer.pack(fill='x')
+        self.status=tk.StringVar(value='Выберите принтер в настройках. Проверка заявок каждые 5 минут.')
+        ttk.Label(footer,textvariable=self.status,foreground=MUTED).pack(side='left')
+        ttk.Button(footer,text='Обновить',command=lambda:self.reload()).pack(side='right')
         self.startup=tk.BooleanVar(value=self.config.get('startup',False))
-        ttk.Checkbutton(frame,text='Запускать при входе в Windows',variable=self.startup,command=self.autostart).pack(anchor='w',pady=12)
-        buttons=ttk.Frame(frame); buttons.pack(fill='x')
-        ttk.Button(buttons,text='Запустить',command=self.start).pack(side='left')
-        ttk.Button(buttons,text='Остановить',command=self.stop).pack(side='left',padx=8)
-        ttk.Button(buttons,text='Пробная печать',command=self.test).pack(side='left')
-        ttk.Button(buttons,text='История',command=lambda:os.startfile(str(self.worker.DATA))).pack(side='left',padx=8)
-        ttk.Label(frame,text='Формат: этикетка 1:1, сверху 15 мм; только артикулы.\nГруппы печатаются по убыванию количества заявок.',wraplength=600).pack(anchor='w',pady=18)
-        self.log= tk.Text(frame,height=9,wrap='word',state='disabled',font=('Segoe UI',10)); self.log.pack(fill='both',expand=True)
+        self.catalog=read_json(self.worker.DATA/'order-catalog.json',[])
+        self.settings_log=[]
         root.protocol('WM_DELETE_WINDOW',self.close)
-        if not smoke: self.background(self.refresh_printers)
+        self.pump(); self.render(); self.routes_description(); self.route_selected()
+        if routing_error: self.note(routing_error)
+        if not smoke:
+            self.background(self.refresh_printers); self.reload(); root.after(300000,self.periodic_view)
 
     def note(self,text):
-        self.status.set(text); self.log.configure(state='normal'); self.log.insert('end',time.strftime('%H:%M:%S')+'  '+text+'\n'); self.log.see('end'); self.log.configure(state='disabled')
-    def ui(self,callback): self.root.after(0,callback)
+        self.status.set(text); self.settings_log.append(datetime.now(MOSCOW).strftime('%H:%M:%S')+'  '+text)
+        self.settings_log=self.settings_log[-100:]
+        if self.settings_window and self.settings_window.winfo_exists():
+            self.log.configure(state='normal'); self.log.delete('1.0','end'); self.log.insert('end','\n'.join(self.settings_log)); self.log.see('end'); self.log.configure(state='disabled')
+    def ui(self,callback): self.actions.put(callback)
+    def pump(self):
+        while True:
+            try: callback=self.actions.get_nowait()
+            except queue.Empty: break
+            try: callback()
+            except Exception: self.note('Не удалось прочитать или обновить панель. Проверьте локальный журнал; история не сбрасывалась.')
+        self.root.after(70,self.pump)
     def background(self,callback): threading.Thread(target=callback,daemon=True).start()
+    def routes_description(self):
+        if self.routes['routes']:
+            self.route_description.set('   |   '.join(route['printer']+' → '+ '; '.join(route['skus']) for route in self.routes['routes']))
+        elif self.routes.get('enabled'):
+            self.route_description.set('Принтеры пока не назначены. Выберите принтер и закрепите за ним артикулы; до назначения они не печатаются.')
+        else:
+            self.route_description.set('Назначений пока нет. Используется принтер '+self.printer.get()+'. Один артикул можно закрепить только за одним принтером.')
+    def route_selected(self):
+        selected=next((r['skus'] for r in self.routes['routes'] if r['printer']==self.route_printer.get()),[])
+        self.sku_checks={sku:tk.BooleanVar(value=True) for sku in selected}
+        self.sku_caption()
+    def sku_caption(self):
+        count=sum(v.get() for v in self.sku_checks.values())
+        self.sku_button.configure(text=f'Артикулы: {count} выбрано ▾' if count else 'Выбрать артикулы ▾')
+    def sku_menu(self):
+        owners={sku:r['printer'] for r in self.routes['routes'] for sku in r['skus']}
+        known=set(owners)
+        for item in self.catalog: known.update(sku_set(item))
+        menu=tk.Menu(self.root,tearoff=False,font=('Segoe UI',11))
+        if not known: menu.add_command(label='В заявках выбранного периода нет артикулов',state='disabled')
+        for sku in sorted(known):
+            other=owners.get(sku)
+            disabled=other is not None and other!=self.route_printer.get()
+            var=self.sku_checks.setdefault(sku,tk.BooleanVar(value=False))
+            menu.add_checkbutton(label=sku+(f'  — {other}' if disabled else ''),variable=var,
+                                 state='disabled' if disabled else 'normal',command=self.sku_caption)
+        def toggle(event):
+            index=menu.index('@'+str(event.y))
+            if index is not None and menu.type(index)=='checkbutton':
+                menu.invoke(index)
+                return 'break'
+        menu.bind('<ButtonRelease-1>',toggle)
+        menu.tk_popup(self.sku_button.winfo_rootx(),self.sku_button.winfo_rooty()+self.sku_button.winfo_height())
+    def store_routes(self,routes):
+        if self.busy: return self.note('Дождитесь завершения текущего действия.')
+        try:
+            config=normalize_routes({'enabled':True,'routes':routes})
+            with self.worker.agent_lock(): self.worker.atomic_json(self.worker.DATA/'printer-routes.json',config)
+            self.routes=config; self.routes_description(); self.render()
+            self.note('Назначения сохранены. Артикулы закреплены за выбранными принтерами.')
+        except PrinterRoutingError as e: self.note(str(e))
+        except OSError: self.note('Сейчас выполняется печать. Дождитесь завершения и сохраните назначение ещё раз.')
+    def save_route(self):
+        name=self.route_printer.get()
+        if name not in self.printer_names: return self.note('Выберите установленный принтер Windows.')
+        selected=sorted(sku for sku,var in self.sku_checks.items() if var.get())
+        if not selected: return self.note('Выберите хотя бы один артикул в выпадающем списке.')
+        self.store_routes([r for r in self.routes['routes'] if r['printer']!=name]+[{'printer':name,'skus':selected}])
+    def remove_route(self):
+        name=self.route_printer.get()
+        if not any(r['printer']==name for r in self.routes['routes']): return self.note('У этого принтера нет назначенных артикулов.')
+        self.store_routes([r for r in self.routes['routes'] if r['printer']!=name]); self.route_selected()
+    def period(self): return parse_period(self.day_from.get(),self.time_from.get(),self.day_to.get(),self.time_to.get())
+    def render(self,reset=False):
+        try: start,end=self.period()
+        except ValueError as e: return self.note(str(e))
+        state=read_json(self.worker.DATA/'state.json',{})
+        groups=order_groups(self.catalog,start,end,state,receipt_statuses(self.worker.DATA))
+        cards=[item for group in groups for item in group['items']]
+        confirmed=sum(v['confirmed'] for v in cards)
+        self.counts.set(f'Заказов: {len(cards)}   ·   Групп: {len(groups)}   ·   Отправлено: {confirmed}   ·   Без подтверждения: {len(cards)-confirmed}')
+        self.board.set_groups(groups,reset_scroll=reset,empty='За выбранный период заявок нет. Измените дату или время.')
+    def today(self):
+        value=datetime.now(MOSCOW).strftime('%d.%m.%Y')
+        self.day_from.set(value); self.day_to.set(value); self.time_from.set('00:00'); self.time_to.set('23:59'); self.reload(True)
+    def last_two_hours(self):
+        end=datetime.now(MOSCOW); start=end-timedelta(hours=2)
+        self.day_from.set(start.strftime('%d.%m.%Y')); self.day_to.set(end.strftime('%d.%m.%Y'))
+        self.time_from.set(start.strftime('%H:%M')); self.time_to.set(end.strftime('%H:%M')); self.reload(True)
+    def reload(self,reset=False):
+        try: start,end=self.period()
+        except ValueError as e: return self.note(str(e))
+        if not self.operation_lock.acquire(False): return self.note('Дождитесь завершения текущего действия.')
+        self.busy=True; self.board.set_enabled(False); self.note('Получаем заказы из amoCRM…')
+        def work():
+            try:
+                incoming=json.loads(self.worker.request('leads?from='+str(start)))['items']
+                # Replace this interval with the fresh API result; no stale moved/deleted cards.
+                cached=[v for v in self.catalog if v.get('createdAt',0)<start]
+                catalog=merge_catalog(cached,incoming)
+                self.worker.atomic_json(self.worker.DATA/'order-catalog.json',catalog)
+                def loaded():
+                    self.catalog=catalog; self.render(reset)
+                    self.note('Заказы обновлены. Зелёная отметка — подтверждение отправки драйверу.')
+                self.ui(loaded)
+            except Exception:
+                self.ui(lambda:self.note('Не удалось обновить заказы. Показана сохранённая история; проверьте подключение.'))
+            finally:
+                self.busy=False; self.operation_lock.release(); self.ui(lambda:self.board.set_enabled(True))
+        self.background(work)
+    def periodic_view(self):
+        if not self.busy: self.reload()
+        self.root.after(300000,self.periodic_view)
+    def settings(self):
+        if self.settings_window and self.settings_window.winfo_exists(): return self.settings_window.lift()
+        window=tk.Toplevel(self.root); self.settings_window=window; window.title('Настройки печати'); window.geometry('650x610'); window.transient(self.root)
+        frame=ttk.Frame(window,padding=24); frame.pack(fill='both',expand=True)
+        ttk.Label(frame,text='Настройки печати',font=('Segoe UI',20,'bold')).pack(anchor='w')
+        ttk.Label(frame,text='snegostroy.amocrm.ru · проверка каждые 5 минут',foreground=MUTED).pack(anchor='w',pady=(4,16))
+        row=ttk.Frame(frame); row.pack(fill='x')
+        ttk.Button(row,text='Подключить компьютер',command=self.pair).pack(side='left')
+        ttk.Button(row,text='Доступ на сайте',command=lambda:webbrowser.open(ORIGIN+'/integrations/amocrm')).pack(side='left',padx=8)
+        ttk.Label(frame,text='Принтер Windows').pack(anchor='w',pady=(20,4))
+        self.printers=ttk.Combobox(frame,textvariable=self.printer,state='readonly',values=self.printer_names); self.printers.pack(fill='x')
+        self.printers.bind('<<ComboboxSelected>>',lambda _:self.save())
+        ttk.Checkbutton(frame,text='Запускать при входе в Windows',variable=self.startup,command=self.autostart).pack(anchor='w',pady=12)
+        row=ttk.Frame(frame); row.pack(fill='x')
+        ttk.Button(row,text='Включить автопечать',command=self.start).pack(side='left')
+        ttk.Button(row,text='Остановить',command=self.stop).pack(side='left',padx=8)
+        ttk.Button(row,text='Открыть журнал',command=lambda:os.startfile(str(self.worker.DATA))).pack(side='left')
+        ttk.Label(frame,text='Этикетка 1:1 · верхняя полоса 70 × 15 мм · только артикулы.\nПовторная печать — с карточки конкретного заказа.\nЗелёный значок подтверждает передачу драйверу, а не выход бумаги.',foreground=MUTED).pack(anchor='w',pady=18)
+        self.log=tk.Text(frame,height=8,wrap='word',font=('Segoe UI',10),bd=0,padx=10,pady=10)
+        self.log.pack(fill='both',expand=True); self.log.insert('end','\n'.join(self.settings_log)); self.log.configure(state='disabled')
     def save(self):
         self.config.update(printer=self.printer.get(),startup=self.startup.get(),enabled=self.running)
         temp=CONFIG.with_suffix('.tmp'); temp.write_text(json.dumps(self.config,ensure_ascii=False),encoding='utf-8'); os.replace(temp,CONFIG)
@@ -124,8 +291,10 @@ class App:
             data=json.loads(powershell("[Console]::OutputEncoding=[Text.Encoding]::UTF8; @(Get-CimInstance Win32_Printer | Select-Object -ExpandProperty Name) | ConvertTo-Json -Compress"))
             names=data if isinstance(data,list) else [data]
             def loaded():
-                self.printers.configure(values=names)
-                if self.config.get('enabled'): self.start()
+                self.printer_names=names
+                self.route_printers.configure(values=names)
+                if self.settings_window and self.settings_window.winfo_exists(): self.printers.configure(values=names)
+                if self.config.get('enabled') and '--panel-only' not in sys.argv: self.start()
             self.ui(loaded)
         except Exception: self.ui(lambda:self.note('Не удалось получить список принтеров. Проверьте драйвер Windows.'))
     def pair(self):
@@ -143,14 +312,14 @@ class App:
                 for _ in range(120):
                     time.sleep(5)
                     if pair_request('poll',{'requestId':data['requestId'],'pollSecret':data['pollSecret']})['approved']:
-                        self.ui(lambda:self.note('Компьютер подключён. Выберите принтер и нажмите «Запустить».')); return
+                        self.ui(lambda:self.note('Компьютер подключён. В настройках выберите принтер и включите автопечать.')); return
                 self.ui(lambda:self.note('Код истёк. Нажмите «Подключить компьютер» ещё раз.'))
             except Exception: self.ui(lambda:self.note('Не удалось подключить компьютер. Проверьте интернет и повторите.'))
         self.background(work)
     def start(self):
         if self.running: return
         if self.thread and self.thread.is_alive(): return self.note('Дождитесь завершения предыдущей проверки.')
-        if self.printer.get() not in self.printers['values']: return self.note('Выберите установленный принтер из списка Windows.')
+        if self.printer.get() not in self.printer_names: return self.note('Выберите установленный принтер в настройках.')
         self.running=True; self.stop_event.clear(); self.save(); self.note('Автоматическая печать включена.')
         def loop():
             while not self.stop_event.is_set():
@@ -160,7 +329,7 @@ class App:
     def stop(self):
         self.running=False; self.stop_event.set(); self.save(); self.note('Остановлено. Уже отправленные задания остаются в очереди Windows.')
     def pass_once(self):
-        if self.busy: return
+        if not self.operation_lock.acquire(False): return
         self.busy=True
         try:
             self.worker.PRINTER=self.config.get('printer','')
@@ -171,27 +340,39 @@ class App:
             self.ui(lambda:self.note('Есть ошибка или неопределённое задание. Проверьте историю; повторная печать заблокирована.'))
         except Exception:
             self.ui(lambda:self.note('Проверка не выполнена. Проверьте подключение, доступ устройства и принтер.'))
-        finally: self.busy=False
-    def test(self):
-        if self.running or self.busy: return self.note('Перед пробной печатью остановите автоматическую проверку.')
-        if not messagebox.askyesno(TITLE,'Отправить одну последнюю доступную этикетку на выбранный принтер? Это пробный экземпляр.'): return
-        self.busy=True; self.worker.PRINTER=self.printer.get()
+        finally:
+            self.busy=False; self.operation_lock.release(); self.ui(self.render)
+    def reprint(self,item):
+        if self.busy: return self.note('Дождитесь завершения текущего действия.')
+        self.worker.PRINTER=self.printer.get()
+        try: actual_printer=self.worker.select_printer(item)
+        except PrinterRoutingError as e: return self.note(str(e))
+        if actual_printer not in self.printer_names: return self.note('Для артикула назначен принтер, который не установлен в Windows.')
+        repeat=item['confirmed'] or str(item['id']) in read_json(self.worker.DATA/'state.json',{}).get('uncertain',{})
+        prompt=f"{'Повторно отправить' if repeat else 'Отправить'} этикетку заказа {order_title(item)}?\n\nПринтер: {actual_printer}\nКоличество: 1 экземпляр."
+        if repeat: prompt+='\nПроверьте, нужен ли дополнительный экземпляр.'
+        if not messagebox.askyesno('Печать этикетки',prompt,parent=self.root): return
+        if not self.operation_lock.acquire(False): return
+        self.busy=True; self.board.set_enabled(False); self.note(f"Готовим этикетку заказа {order_title(item)}…")
         def work():
             try:
-                data=json.loads(self.worker.request('leads?from=0&sample=1'))
-                item=next(v for v in data['items'] if v['hasLabel'] and v['composition'])
-                with self.worker.agent_lock():
-                    _,image,details=self.worker.prepare(item,for_print=True,variant='-desktop-test')
-                    self.worker.print_label(image,details)
-                self.ui(lambda:self.note('Пробная этикетка отправлена. Проверьте физический отпечаток.'))
-            except Exception: self.ui(lambda:self.note('Не удалось отправить пробную этикетку. Проверьте доступ и принтер.'))
-            finally: self.busy=False
+                self.manual_print(item['id'],actual_printer)
+                self.ui(lambda:self.note(f"Этикетка заказа {order_title(item)} отправлена: 1 экземпляр. Проверьте отпечаток."))
+            except Exception: self.ui(lambda:self.note('Печать не подтверждена. Проверьте очередь Windows и журнал. Автоматического повтора не будет.'))
+            finally:
+                self.busy=False; self.operation_lock.release()
+                self.ui(lambda:(self.board.set_enabled(True),self.render()))
         self.background(work)
+    def manual_print(self,item_id,expected_printer=None):
+        from print_actions import manual_print
+        manual_print(self.worker,item_id,expected_printer)
     def autostart(self):
         try:
             with winreg.CreateKey(winreg.HKEY_CURRENT_USER,r'Software\Microsoft\Windows\CurrentVersion\Run') as key:
                 if self.startup.get():
-                    winreg.SetValueEx(key,'SnowbrickPrinter',0,winreg.REG_SZ,'"'+sys.executable+'"')
+                    command='"'+sys.executable+'"'
+                    if not getattr(sys,'frozen',False): command+=' "'+str(Path(__file__).resolve())+'"'
+                    winreg.SetValueEx(key,'SnowbrickPrinter',0,winreg.REG_SZ,command)
                 else:
                     try: winreg.DeleteValue(key,'SnowbrickPrinter')
                     except FileNotFoundError: pass
@@ -212,6 +393,14 @@ def self_test():
     import zxingcpp, pypdf, reportlab, PIL
     root=tk.Tk(); root.withdraw()
     app=App(root,smoke=True); root.update_idletasks()
+    assert app.board.winfo_exists()
+    timestamp=int(datetime.now(MOSCOW).timestamp())
+    samples=[{'id':90000000+n,'createdAt':timestamp,'composition':'(CHECK_SKU)','hasLabel':True} for n in range(8)]
+    app.board.set_groups(order_groups(samples,timestamp,timestamp,{}))
+    root.update_idletasks()
+    assert len(app.board.hitboxes)==8
+    assert len({round(value[0]) for value in app.board.hitboxes})==4
+    app.settings(); root.update_idletasks()
     assert app.printers.winfo_exists() and app.log.winfo_exists()
     root.destroy()
     out=Path(sys.argv[sys.argv.index('--self-test')+1])

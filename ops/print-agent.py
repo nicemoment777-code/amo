@@ -12,6 +12,7 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler
 from urllib.error import HTTPError
 from contextlib import contextmanager
 from print_order import group_key, grouped_print_order
+from printer_routing import load_routes, choose_printer
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = Path(os.environ.get('SNOWBRICK_DATA_DIR', str(ROOT / 'data' / 'printing')))
@@ -63,10 +64,14 @@ def prepare(item, for_print=False, variant=''):
         raise RuntimeError('Область состава перекрывает исходный штрихкод; печать остановлена')
     return target, prefix.with_suffix('.png'), details
 
-def print_label(image, details):
+def select_printer(item):
+    return choose_printer(item,load_routes(DATA),PRINTER)
+
+def print_label(image, details, printer=None):
     script = Path(os.environ.get('SNOWBRICK_PRINT_SCRIPT', str(ROOT/'ops'/'print-image.ps1')))
-    result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy','Bypass','-File', str(script), '-ImagePath',str(image),'-WidthMm',str(details['widthMm']),'-HeightMm',str(details['heightMm']),'-PrinterName',PRINTER],capture_output=True,text=True,encoding='utf-8',errors='replace',creationflags=subprocess.CREATE_NO_WINDOW)
+    result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy','Bypass','-File', str(script), '-ImagePath',str(image),'-WidthMm',str(details['widthMm']),'-HeightMm',str(details['heightMm']),'-PrinterName',printer or PRINTER],capture_output=True,text=True,encoding='utf-8',errors='replace',creationflags=subprocess.CREATE_NO_WINDOW)
     if result.returncode or 'PRINT_SUBMITTED' not in result.stdout:
+        atomic_json(DATA/'printer-error.json', {'at':int(time.time()), 'exitCode':result.returncode, 'detail':result.stderr[-6000:]})
         raise RuntimeError('Драйвер не подтвердил отправку печати')
 
 @contextmanager
@@ -94,21 +99,23 @@ def run_once():
     state['scanFrom'] = scan_started
     atomic_json(state_path, state)
     count = 0; waiting = 0; errors = []; prepared = {}; ready_items = []
+    routing=load_routes(DATA)
     for key in list(state['pending']):
         try:
             item = json.loads(request('item/' + key))
             if not item['composition'] or not item['hasLabel']:
                 waiting += 1
                 continue
+            printer=choose_printer(item,routing,PRINTER)
             _, image, details = prepare(item, for_print=True)
-            prepared[key] = (image, details)
+            prepared[key] = (image, details, printer)
             ready_items.append(item)
         except Exception as error:
             errors.append({'id':key,'type':type(error).__name__})
     ordered = grouped_print_order(ready_items)
     for item in ordered:
         key = str(item['id'])
-        image, details = prepared[key]
+        image, details, printer = prepared[key]
         try:
             claim = json.loads(request('claim', {'id':item['id']}))
             if not claim['claimed']:
@@ -117,12 +124,12 @@ def run_once():
                 continue
             # Persist BEFORE handing off to spooler: interrupted/ambiguous jobs
             # are never automatically repeated, preventing duplicate labels.
-            state['uncertain'][key] = {'at': int(time.time()), 'status': 'submitting'}
+            state['uncertain'][key] = {'at': int(time.time()), 'status': 'submitting', 'printer':printer}
             del state['pending'][key]
             atomic_json(state_path, state)
-            print_label(image, details)
+            print_label(image, details, printer)
             request('complete', {'id':item['id']})
-            state['printed'][key] = {'at': int(time.time()), 'status': 'submitted'}
+            state['printed'][key] = {'at': int(time.time()), 'status': 'submitted', 'printer':printer}
             del state['uncertain'][key]
             count += 1
             atomic_json(state_path, state)

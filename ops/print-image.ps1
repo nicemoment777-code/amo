@@ -7,12 +7,12 @@ param(
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $printer = Get-CimInstance Win32_Printer | Where-Object Name -EQ $PrinterName
-if (-not $printer -or $printer.WorkOffline) { throw 'Выбранный принтер недоступен' }
+if (-not $printer -or $printer.WorkOffline) { throw 'PRINTER_UNAVAILABLE' }
 $image = [System.Drawing.Image]::FromFile((Resolve-Path -LiteralPath $ImagePath).Path)
 $document = [System.Drawing.Printing.PrintDocument]::new()
 try {
   $document.PrinterSettings.PrinterName = $PrinterName
-  if (-not $document.PrinterSettings.IsValid) { throw 'Не найден драйвер принтера' }
+  if (-not $document.PrinterSettings.IsValid) { throw 'PRINTER_DRIVER_NOT_FOUND' }
   $document.PrinterSettings.Copies = 1
   $document.DocumentName = 'CDEK - composition label'
   $document.PrintController = [System.Drawing.Printing.StandardPrintController]::new()

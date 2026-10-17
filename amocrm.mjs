@@ -58,7 +58,12 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
     const composition = fieldText(lead, 'Состав заказа');
     let labelHost = null;
     try { labelHost = new URL(label).hostname; } catch {}
-    return {id: lead.id, createdAt: lead.created_at, pipelineId: lead.pipeline_id, composition, hasLabel: Boolean(labelHost), labelHost};
+    const orderValue = name => (lead.custom_fields_values || [])
+      .filter(f => f.field_name?.trim().toLowerCase() === name.toLowerCase())
+      .flatMap(f => f.values || []).map(v => v.value)
+      .find(value => (typeof value === 'string' && value.trim()) || (typeof value === 'number' && Number.isSafeInteger(value)));
+    const orderNumber = orderValue('ORDERID') ?? orderValue('Номер заказа');
+    return {id: lead.id, orderNumber: orderNumber == null ? null : String(orderNumber).trim(), createdAt: lead.created_at, pipelineId: lead.pipeline_id, composition, hasLabel: Boolean(labelHost), labelHost};
   }
   return {
     printCandidates: (from, sample = false) => serial(async () => {
