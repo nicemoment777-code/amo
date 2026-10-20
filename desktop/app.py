@@ -42,6 +42,7 @@ from printer_panel import PrinterPanel
 from rounded_controls import RoundedNotebook, RoundedArticleCards
 from order_diagnostics import error_reasons
 from auto_print import auto_print_enabled, set_auto_print
+from pdf_archive import archive_directory, archive_labels
 
 class Blob(ctypes.Structure):
     _fields_ = [('size', wintypes.DWORD), ('data', ctypes.POINTER(ctypes.c_byte))]
@@ -93,6 +94,7 @@ class App:
     def __init__(self, root, smoke=False):
         self.root = root; self.running = False; self.busy = False; self.stop_event = threading.Event(); self.thread = None
         self.actions = queue.Queue(); self.operation_lock = threading.Lock(); self.settings_window = None
+        self.smoke=smoke; self.archive_lock=threading.Lock(); self.closing=threading.Event()
         self.config = json.loads(CONFIG.read_text(encoding='utf-8')) if CONFIG.exists() else {}
         self.worker = load_worker()
         self.auto_print=tk.BooleanVar(value=auto_print_enabled(self.worker.DATA))
@@ -129,11 +131,18 @@ class App:
         self.connection_label=ttk.Label(connection_row,textvariable=self.connection,foreground=MUTED)
         self.connection_label.pack(side='left')
         ttk.Button(connection_row,text='Проверить связь и обновить',command=lambda:self.reload(True)).pack(side='right')
+        archive_row=ttk.Frame(frame); archive_row.pack(fill='x',pady=(0,8))
+        self.archive_status=tk.StringVar(value='PDF: постоянный архив на рабочем столе → Этикетки доставка')
+        ttk.Label(archive_row,textvariable=self.archive_status,font=('Segoe UI',9),foreground=MUTED).pack(side='left')
+        ttk.Button(archive_row,text='Открыть папку PDF',command=self.open_archive).pack(side='right')
         self.browse_actions=ttk.Frame(frame); self.browse_actions.pack(fill='x',pady=(0,10))
         self.select_button=ttk.Button(self.browse_actions,text='Выбрать несколько',command=self.toggle_selection)
         self.select_button.pack(side='left')
         ttk.Label(self.browse_actions,text='Доставка').pack(side='left',padx=(12,8))
-        ttk.Combobox(self.browse_actions,textvariable=self.carrier,state='readonly',values=['Все доставки','СДЭК','Яндекс','Не указана'],width=17).pack(side='left')
+        self.delivery_buttons={}
+        for value,label in [('Яндекс','Яндекс'),('СДЭК','СДЭК'),('Все доставки','Все заявки')]:
+            button=ttk.Button(self.browse_actions,text=label,command=lambda v=value:self.carrier.set(v))
+            button.pack(side='left',padx=(0,6)); self.delivery_buttons[value]=button
         self.carrier.trace_add('write',lambda *_:self.render(True))
         self.all_time=tk.BooleanVar(value=True)
         ttk.Checkbutton(self.browse_actions,text='За всё время',variable=self.all_time,command=lambda:self.reload(True)).pack(side='left',padx=16)
@@ -244,10 +253,16 @@ class App:
     def reset_article_filter(self):
         self.card_filter=None; self.render(True)
     def refresh_article_buttons(self):
-        values=set(self.known_skus())
+        from orders_model import delivery_service
+        source=self.catalog
+        carrier={'СДЭК':'cdek','Яндекс':'yandex'}.get(self.carrier.get())
+        if carrier:
+            start,end=self.period()
+            source=[item for item in self.catalog if delivery_service(item)==carrier and start<=item.get('createdAt',0)<=end]
+        values={sku for item in source for sku in sku_set(item)} if carrier else set(self.known_skus())
         if self.card_filter is not None: values.update(s for s in self.card_filter if s is not None)
         choices=[((), 'Все артикулы', self.card_filter is None, True, ('#ffffff',INK), self.reset_article_filter)]
-        unknown=any(not sku_set(item) for item in self.catalog)
+        unknown=any(not sku_set(item) for item in source)
         for sku in sorted(values)+([None] if unknown or self.card_filter and None in self.card_filter else []):
             label=(sku or 'Без артикула')+' · '+str(len(self.article_pending.get(sku,[])))
             choices.append((sku,label,self.card_filter is not None and sku in self.card_filter,
@@ -282,6 +297,15 @@ class App:
         except ValueError as e: return self.note(str(e))
         state=read_json(self.worker.DATA/'state.json',{})
         carrier={'СДЭК':'cdek','Яндекс':'yandex','Не указана':'unknown'}.get(self.carrier.get())
+        from orders_model import delivery_service
+        delivery_counts={'cdek':0,'yandex':0,'all':0}
+        for item in self.catalog:
+            if start<=item.get('createdAt',0)<=end:
+                delivery_counts['all']+=1
+                service=delivery_service(item)
+                if service in delivery_counts: delivery_counts[service]+=1
+        for value,label,key in [('Яндекс','Яндекс','yandex'),('СДЭК','СДЭК','cdek'),('Все доставки','Все заявки','all')]:
+            self.delivery_buttons[value].configure(text=f'{label} · {delivery_counts[key]}',style='Accent.TButton' if value==self.carrier.get() else 'TButton')
         receipts=receipt_statuses(self.worker.DATA)
         self.article_pending=pending_by_article(order_groups(self.catalog,start,end,state,receipts,carrier=carrier))
         all_groups=group_by_day(order_groups(self.catalog,start,end,state,receipts,self.card_filter,carrier=carrier))
@@ -330,6 +354,7 @@ class App:
                     self.connection.set('Есть соединение с amoCRM · Обновлено '+datetime.now(MOSCOW).strftime('%d.%m.%Y %H:%M:%S')+' МСК')
                     self.connection_label.configure(foreground='#008a44')
                     self.note('Заказы обновлены. Зелёная отметка — подтверждение отправки драйверу.')
+                    if not self.smoke: self.start_archive(catalog)
                 self.ui(loaded)
             except Exception:
                 def failed():
@@ -339,6 +364,23 @@ class App:
                 self.ui(failed)
             finally:
                 self.busy=False; self.operation_lock.release(); self.ui(lambda:self.board.set_enabled(True))
+        self.background(work)
+    def open_archive(self):
+        try:
+            folder=archive_directory(); folder.mkdir(parents=True,exist_ok=True); os.startfile(folder)
+        except OSError: self.note('Не удалось открыть архив PDF на рабочем столе.')
+    def start_archive(self,catalog):
+        if not self.archive_lock.acquire(False): return
+        self.archive_status.set('PDF: сохраняем этикетки в архив на рабочем столе…')
+        def progress(result):
+            text=f"PDF: сохранено новых {result['saved']}, уже в архиве {result['existing']}, без доступного PDF {result['waiting']}"
+            if result['errors']: text+=f" · Ошибок скачивания: {result['errors']}; повтор при следующем обновлении"
+            self.ui(lambda:self.archive_status.set(text))
+        def work():
+            try: archive_labels(archive_directory(),catalog,self.worker.request,self.closing.is_set,progress)
+            except Exception:
+                self.ui(lambda:self.archive_status.set('PDF: не удалось сохранить архив. Проверьте доступ к рабочему столу и свободное место.'))
+            finally: self.archive_lock.release()
         self.background(work)
     def periodic_view(self):
         if not self.busy: self.reload()
@@ -553,7 +595,7 @@ class App:
         if self.running:
             self.stop()
             if self.running: return
-        self.stop_event.set(); self.root.destroy()
+        self.closing.set(); self.stop_event.set(); self.root.destroy()
 
 def self_test():
     assert protect(protect(b'test-only'),decrypt=True)==b'test-only'
@@ -573,7 +615,7 @@ def self_test():
     app.printer_panel.set_printers(['Self-test printer'])
     assert all('Self-test printer' in row['combo']['values'] for row in app.printer_panel.rows)
     timestamp=int(datetime.now(MOSCOW).timestamp())
-    samples=[{'id':90000000+n,'createdAt':timestamp,'composition':f'(CHECK_{n//3})','hasLabel':True} for n in range(8)]
+    samples=[{'id':90000000+n,'createdAt':timestamp,'composition':f'(CHECK_{n//3})','hasLabel':True,'deliveryService':'cdek' if n%2==0 else 'yandex'} for n in range(8)]
     app.board.set_groups(order_groups(samples,timestamp,timestamp,{}))
     root.update_idletasks()
     assert len(app.board.hitboxes)==8
@@ -590,6 +632,10 @@ def self_test():
     assert app.article_filters.printer_colors['CHECK_0']=='#dc2844'
     app.card_filter={'NOT_SELECTED'}; app.render(); assert not app.board.hitboxes
     app.reset_article_filter(); assert len(app.board.hitboxes)==8
+    app.carrier.set('Яндекс'); assert len(app.board.hitboxes)==4 and len(app.article_pending['CHECK_0'])==1
+    assert str(app.delivery_buttons['Яндекс'].cget('text')).endswith('4')
+    app.carrier.set('СДЭК'); assert len(app.board.hitboxes)==4 and len(app.article_pending['CHECK_0'])==2
+    app.carrier.set('Все доставки'); assert len(app.board.hitboxes)==8
     app.toggle_selection(); app.select_all_visible()
     assert len(app.selected_ids)==8 and len(app.board.selection_boxes)==8
     app.clear_selection(); assert not app.selected_ids
