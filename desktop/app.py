@@ -183,7 +183,7 @@ class App:
             page=ttk.Frame(self.tabs); self.tabs.add(page,text=label)
             board=OrdersBoard(page,self.reprint,self.toggle_card,self.show_error); board.pack(fill='both',expand=True)
             self.boards.append(board)
-        self.board=self.boards[0]
+        self.tabs.select(2); self.board=self.boards[2]
         self.tabs.bind('<<NotebookTabChanged>>',self.tab_changed,add='+')
         footer=ttk.Frame(root,padding=(28,10)); footer.pack(side='bottom',fill='x',before=frame)
         self.status=tk.StringVar(value='Выберите принтер в настройках. Проверка заявок каждые 5 минут.')
@@ -256,16 +256,10 @@ class App:
     def reset_article_filter(self):
         self.card_filter=None; self.render(True)
     def refresh_article_buttons(self):
-        from orders_model import delivery_service
-        source=self.search_catalog()
-        carrier={'СДЭК':'cdek','Яндекс':'yandex'}.get(self.carrier.get())
-        if carrier:
-            start,end=self.period()
-            source=[item for item in source if delivery_service(item)==carrier and start<=item.get('createdAt',0)<=end]
-        values={sku for item in source for sku in sku_set(item)}
+        values={sku for sku,items in self.article_pending.items() if sku is not None and items}
         choices=[((), 'Все артикулы', self.card_filter is None, True, ('#ffffff',INK), self.reset_article_filter)]
-        unknown=any(not sku_set(item) for item in source)
-        for sku in sorted(values)+([None] if unknown or self.card_filter and None in self.card_filter else []):
+        unknown=bool(self.article_pending.get(None))
+        for sku in sorted(values)+([None] if unknown else []):
             label=(sku or 'Без артикула')+' · '+str(len(self.article_pending.get(sku,[])))
             choices.append((sku,label,self.card_filter is not None and sku in self.card_filter,
                             True,sku_color((sku,)) if sku else sku_color(()),lambda s=sku:self.toggle_article_filter(s)))
@@ -323,7 +317,10 @@ class App:
         for value,label,key in [('Яндекс','Яндекс','yandex'),('СДЭК','СДЭК','cdek'),('Все доставки','Все заявки','all')]:
             self.delivery_buttons[value].configure(text=f'{label} · {delivery_counts[key]}',style='Accent.TButton' if value==self.carrier.get() else 'TButton')
         receipts=receipt_statuses(self.worker.DATA)
+        previous_articles=set(self.article_pending)
         self.article_pending=pending_by_article(order_groups(catalog,start,end,state,receipts,carrier=carrier))
+        if self.card_filter and self.card_filter.intersection(previous_articles-set(self.article_pending)):
+            self.card_filter=self.card_filter.intersection(self.article_pending) or None
         all_groups=group_by_day(order_groups(catalog,start,end,state,receipts,self.card_filter,carrier=carrier))
         grouped_tabs=[all_groups,print_tab_groups(all_groups,True),print_tab_groups(all_groups,False)]
         totals=[sum(len(g['items']) for g in groups) for groups in grouped_tabs]
@@ -671,6 +668,7 @@ def self_test():
     import zxingcpp, pypdf, reportlab, PIL
     root=tk.Tk(); root.withdraw()
     app=App(root,smoke=True); root.update_idletasks()
+    assert app.tabs.index('current')==2
     assert app.board.winfo_exists()
     assert app.printer_panel is None
     app.settings(); app.settings_window.withdraw(); root.update_idletasks()
@@ -759,6 +757,14 @@ def self_test():
     icon_probe.destroy()
     app.render()
     assert len(app.article_pending['CHECK_0'])==3
+    with patch.object(sys.modules[__name__],'read_json',side_effect=lambda path,default: {'printed':{str(90000000+n):{'status':'submitted'} for n in range(3)}} if Path(path).name=='state.json' else original_read(path,default)):
+        app.card_filter={'CHECK_0'}
+        app.render()
+        assert 'CHECK_0' not in app.article_filters.buttons
+        assert 'CHECK_1' in app.article_filters.buttons
+        assert app.card_filter is None
+        assert sum(len(g['items']) for g in app.boards[1].groups)==3
+    app.render()
     with patch.object(app,'print_items') as batch:
         app.article_filters.action_buttons['CHECK_0'].invoke()
         assert len(batch.call_args.args[0])==3
