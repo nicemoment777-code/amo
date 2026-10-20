@@ -134,11 +134,13 @@ class App:
         self.browse_actions=ttk.Frame(frame); self.browse_actions.pack(fill='x',pady=(0,10))
         self.select_button=ttk.Button(self.browse_actions,text='Выбрать несколько',command=self.toggle_selection)
         self.select_button.pack(side='left')
-        ttk.Label(self.browse_actions,text='Доставка').pack(side='left',padx=(12,8))
+        article_heading=ttk.Frame(frame)
+        self.delivery_controls=ttk.Frame(article_heading)
+        ttk.Label(self.delivery_controls,text='Доставка').pack(side='left',padx=(12,8))
         self.delivery_buttons={}
         for value,label in [('Яндекс','Яндекс'),('СДЭК','СДЭК'),('Все доставки','Все заявки')]:
             color,ink={'Яндекс':('#ffb52e',INK),'СДЭК':('#199653','white'),'Все доставки':('#dce0e6',INK)}[value]
-            button=RoundedButton(self.browse_actions,text=label,command=lambda v=value:self.carrier.set(v),color=color,foreground=ink)
+            button=RoundedButton(self.delivery_controls,text=label,command=lambda v=value:self.carrier.set(v),color=color,foreground=ink)
             button.pack(side='left',padx=(0,6)); self.delivery_buttons[value]=button
         self.carrier.trace_add('write',lambda *_:self.render(True))
         self.all_time=tk.BooleanVar(value=True)
@@ -169,7 +171,8 @@ class App:
         self.search_entry.pack(side='left',ipady=4); self.search_entry.bind('<Return>',lambda _:self.search_orders())
         RoundedButton(search_row,text='Поиск',command=self.search_orders).pack(side='left',padx=6)
         RoundedButton(search_row,text='Сбросить',command=self.clear_search).pack(side='left')
-        article_heading=ttk.Frame(frame); article_heading.pack(fill='x',pady=(10,0))
+        article_heading.pack(fill='x',pady=(10,0))
+        self.delivery_controls.pack(side='right')
         ttk.Label(article_heading,text='Карточки по артикулу · не напечатано').pack(side='left')
         ttk.Button(article_heading,text='Обновить артикулы',command=self.refresh_articles).pack(side='left',padx=16)
         self.article_filters=RoundedArticleCards(frame)
