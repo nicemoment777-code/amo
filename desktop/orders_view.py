@@ -1,4 +1,4 @@
-"""Панель из четырёх карточек в ряд с прокруткой по группам артикулов."""
+"""Панель из четырёх карточек в ряд с разделителями дней поступления."""
 import calendar
 from datetime import datetime
 import tkinter as tk
@@ -74,8 +74,18 @@ class OrdersBoard(ttk.Frame):
         if not self.groups:
             c.create_text(width/2,110,text='Пока нет заказов',font=('Segoe UI',24,'bold'),fill=INK)
             c.create_text(width/2,154,text=self.empty,font=('Segoe UI',11),fill=MUTED)
-        index=0
+        index=0; current_day=None
+        day_counts={}
         for group in self.groups:
+            day_counts[group.get('day')]=day_counts.get(group.get('day'),0)+len(group['items'])
+        for group in self.groups:
+            day=group.get('day')
+            if day is not None and day!=current_day:
+                y+=((index+3)//4)*(cardh+gap)
+                index=0; current_day=day
+                c.create_text(left,y+14,anchor='w',text=f'{day} · Заявок: {day_counts[day]}',font=('Segoe UI',16,'bold'),fill=INK,tags='day-heading')
+                c.create_line(left,y+40,width-left,y+40,fill='#dce2ed')
+                y+=58
             color,fg=group['colors']
             for item in group['items']:
                 col=index%4; row=index//4; x=left+col*(cardw+gap); top=y+row*(cardh+gap)

@@ -109,6 +109,18 @@ def print_tab_groups(groups, confirmed):
     return [{**group, 'items': cards} for group in groups
             if (cards := [item for item in group['items'] if item['confirmed'] == confirmed])]
 
+def group_by_day(groups):
+    """Дни поступления по МСК, новые сверху; цвета внутри дня сохраняются."""
+    days = {}
+    for group in groups:
+        for item in group['items']:
+            day = datetime.fromtimestamp(item.get('createdAt', 0), MOSCOW).date()
+            by_sku = days.setdefault(day, {})
+            entry = by_sku.setdefault(group['skus'], {**group, 'day': day.strftime('%d.%m.%Y'), 'items': []})
+            entry['items'].append(item)
+    return [group for day in sorted(days, reverse=True) for group in days[day].values()]
+
+
 def parse_period(day_from, time_from, day_to, time_to):
     try:
         start = datetime.strptime(day_from+' '+time_from, '%d.%m.%Y %H:%M').replace(tzinfo=MOSCOW)

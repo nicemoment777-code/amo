@@ -35,7 +35,7 @@ runtime = Path(os.environ['USERPROFILE'])/'.cache/codex-runtimes/codex-primary-r
 os.environ.setdefault('SNOWBRICK_POPPLER', str(BASE/'poppler'/'pdftoppm.exe' if getattr(sys,'frozen',False) else runtime/'native/poppler/Library/bin/pdftoppm.exe'))
 os.environ.setdefault('SNOWBRICK_PRINT_SCRIPT', str(BASE/'ops'/'print-image.ps1'))
 sys.path.insert(0, str(BASE/'ops'))
-from orders_model import MOSCOW, read_json, order_groups, parse_period, merge_catalog, receipt_statuses, sku_set, order_title, sku_color, print_tab_groups
+from orders_model import MOSCOW, read_json, order_groups, parse_period, merge_catalog, receipt_statuses, sku_set, order_title, sku_color, print_tab_groups, group_by_day
 from orders_view import OrdersBoard, DatePicker, BG, INK, MUTED
 from printer_routing import load_routes, normalize_routes, choose_printer, PrinterRoutingError
 from printer_panel import PrinterPanel
@@ -119,13 +119,20 @@ class App:
         ttk.Label(title,text='Заказы',font=('Segoe UI',30,'bold')).pack(side='left')
         ttk.Button(title,text='Настройки',command=self.settings).pack(side='right')
         ttk.Label(title,text='СНЕГОСТРОЙ',foreground=MUTED,font=('Segoe UI',11,'bold')).pack(side='right',padx=24)
-        ttk.Label(frame,text='Этикетки amoCRM  /  Группировка по артикулам',foreground=MUTED).pack(anchor='w',pady=(0,14))
+        ttk.Label(frame,text='Все заявки amoCRM  /  По дням поступления · МСК',foreground=MUTED).pack(anchor='w',pady=(0,14))
+        connection_row=ttk.Frame(frame); connection_row.pack(fill='x',pady=(0,10))
+        self.connection=tk.StringVar(value='Соединение с amoCRM: ещё не проверено')
+        self.connection_label=ttk.Label(connection_row,textvariable=self.connection,foreground=MUTED)
+        self.connection_label.pack(side='left')
+        ttk.Button(connection_row,text='Проверить связь и обновить',command=lambda:self.reload(True)).pack(side='right')
         self.browse_actions=ttk.Frame(frame); self.browse_actions.pack(fill='x',pady=(0,10))
         self.select_button=ttk.Button(self.browse_actions,text='Выбрать несколько',command=self.toggle_selection)
         self.select_button.pack(side='left')
         ttk.Label(self.browse_actions,text='Доставка').pack(side='left',padx=(12,8))
         ttk.Combobox(self.browse_actions,textvariable=self.carrier,state='readonly',values=['Все доставки','СДЭК','Яндекс','Не указана'],width=17).pack(side='left')
         self.carrier.trace_add('write',lambda *_:self.render(True))
+        self.all_time=tk.BooleanVar(value=True)
+        ttk.Checkbutton(self.browse_actions,text='За всё время',variable=self.all_time,command=lambda:self.reload(True)).pack(side='left',padx=16)
         self.batch_controls=ttk.Frame(frame)
         ttk.Button(self.batch_controls,text='Выбрать все в списке',command=self.select_all_visible).pack(side='left')
         ttk.Button(self.batch_controls,text='Снять выделение',command=self.clear_selection).pack(side='left',padx=8)
@@ -141,7 +148,7 @@ class App:
             ttk.Button(filters,text='▦',width=2,command=lambda v=day:DatePicker(root,v)).pack(side='left',padx=(2,6))
             ttk.Spinbox(filters,textvariable=clock,values=[f'{h:02}:{m:02}' for h in range(24) for m in (0,30)],width=6,wrap=True).pack(side='left',padx=(0,16))
         ttk.Label(filters,text='МСК',foreground=MUTED).pack(side='left',padx=(0,12))
-        ttk.Button(filters,text='Показать',style='Accent.TButton',command=lambda:self.reload(True)).pack(side='left')
+        ttk.Button(filters,text='Показать период',style='Accent.TButton',command=self.show_period).pack(side='left')
         ttk.Button(filters,text='Сегодня',command=self.today).pack(side='left',padx=6)
         ttk.Button(filters,text='Последние 2 часа',command=self.last_two_hours).pack(side='left')
         article_heading=ttk.Frame(frame); article_heading.pack(fill='x',pady=(10,0))
@@ -156,7 +163,7 @@ class App:
         ttk.Label(summary,text='✓ Отправлено     ! Нет подтверждения',foreground=MUTED).pack(side='right')
         self.tabs=ttk.Notebook(root); self.tabs.pack(fill='both',expand=True,padx=28)
         self.boards=[]
-        for label in ['✓ Напечатанные','! Ошибки / не напечатаны']:
+        for label in ['Все заявки','✓ Напечатанные','! Ошибки / не напечатаны']:
             page=ttk.Frame(self.tabs); self.tabs.add(page,text=label)
             board=OrdersBoard(page,self.reprint,self.toggle_card); board.pack(fill='both',expand=True)
             self.boards.append(board)
@@ -259,33 +266,41 @@ class App:
         except OSError:
             if not automatic: self.note('Сейчас выполняется печать. Дождитесь завершения и сохраните назначение ещё раз.')
         return False
-    def period(self): return parse_period(self.day_from.get(),self.time_from.get(),self.day_to.get(),self.time_to.get())
+    def period(self):
+        if self.all_time.get(): return 0, 253402289999
+        return parse_period(self.day_from.get(),self.time_from.get(),self.day_to.get(),self.time_to.get())
+    def show_period(self):
+        self.all_time.set(False); self.reload(True)
     def render(self,reset=False):
         try: start,end=self.period()
         except ValueError as e: return self.note(str(e))
         state=read_json(self.worker.DATA/'state.json',{})
         carrier={'СДЭК':'cdek','Яндекс':'yandex','Не указана':'unknown'}.get(self.carrier.get())
-        all_groups=order_groups(self.catalog,start,end,state,receipt_statuses(self.worker.DATA),self.card_filter,carrier=carrier)
-        grouped_tabs=[print_tab_groups(all_groups,True),print_tab_groups(all_groups,False)]
+        all_groups=group_by_day(order_groups(self.catalog,start,end,state,receipt_statuses(self.worker.DATA),self.card_filter,carrier=carrier))
+        grouped_tabs=[all_groups,print_tab_groups(all_groups,True),print_tab_groups(all_groups,False)]
         totals=[sum(len(g['items']) for g in groups) for groups in grouped_tabs]
-        self.tabs.tab(0,text=f'✓ Напечатанные · {totals[0]}')
-        self.tabs.tab(1,text=f'! Ошибки / не напечатаны · {totals[1]}')
+        self.tabs.tab(0,text=f'Все заявки · {totals[0]}')
+        self.tabs.tab(1,text=f'✓ Напечатанные · {totals[1]}')
+        self.tabs.tab(2,text=f'! Ошибки / не напечатаны · {totals[2]}')
         active=self.tabs.index('current'); self.board=self.boards[active]; groups=grouped_tabs[active]
         cards=[item for group in groups for item in group['items']]
         self.visible_cards=cards
         self.selected_ids.intersection_update(str(v['id']) for v in cards if v['canPrint'])
         self.batch_button.configure(text=f'Печать выбранных ({len(self.selected_ids)})',state='normal' if self.selected_ids and not self.busy else 'disabled')
         confirmed=sum(v['confirmed'] for v in cards)
-        self.counts.set(f'Заказов: {len(cards)}   ·   Групп: {len(groups)}   ·   Отправлено: {confirmed}   ·   Без подтверждения: {len(cards)-confirmed}')
+        days=len({g['day'] for g in groups})
+        self.counts.set(f'Заказов: {len(cards)}   ·   Дней: {days}   ·   Отправлено: {confirmed}   ·   Без подтверждения: {len(cards)-confirmed}')
         self.refresh_article_buttons()
         if self.printer_panel: self.printer_panel.refresh_articles()
         for index,board in enumerate(self.boards):
             board.selection_mode=self.selection_mode; board.selected=set(self.selected_ids); board.enabled=not self.busy
             board.set_groups(grouped_tabs[index],reset_scroll=reset,empty='Нет заказов для этой вкладки и выбранных фильтров. Измените период, доставку или артикулы.')
     def today(self):
+        self.all_time.set(False)
         value=datetime.now(MOSCOW).strftime('%d.%m.%Y')
         self.day_from.set(value); self.day_to.set(value); self.time_from.set('00:00'); self.time_to.set('23:59'); self.reload(True)
     def last_two_hours(self):
+        self.all_time.set(False)
         end=datetime.now(MOSCOW); start=end-timedelta(hours=2)
         self.day_from.set(start.strftime('%d.%m.%Y')); self.day_to.set(end.strftime('%d.%m.%Y'))
         self.time_from.set(start.strftime('%H:%M')); self.time_to.set(end.strftime('%H:%M')); self.reload(True)
@@ -294,19 +309,26 @@ class App:
         except ValueError as e: return self.note(str(e))
         if not self.operation_lock.acquire(False): return self.note('Дождитесь завершения текущего действия.')
         self.busy=True; self.board.set_enabled(False); self.note('Получаем заказы из amoCRM…')
+        self.connection.set('Соединение с amoCRM: проверяем…')
+        self.connection_label.configure(foreground=MUTED)
         def work():
             try:
-                incoming=json.loads(self.worker.request('leads?from='+str(start)))['items']
-                # Replace this interval with the fresh API result; no stale moved/deleted cards.
-                cached=[v for v in self.catalog if v.get('createdAt',0)<start]
-                catalog=merge_catalog(cached,incoming)
+                # Полный каталог только для просмотра; автоочередь и история печати отдельно.
+                incoming=json.loads(self.worker.request('leads?from=0'))['items']
+                catalog=merge_catalog([],incoming)
                 self.worker.atomic_json(self.worker.DATA/'order-catalog.json',catalog)
                 def loaded():
                     self.catalog=catalog; self.render(reset)
+                    self.connection.set('Есть соединение с amoCRM · Обновлено '+datetime.now(MOSCOW).strftime('%d.%m.%Y %H:%M:%S')+' МСК')
+                    self.connection_label.configure(foreground='#008a44')
                     self.note('Заказы обновлены. Зелёная отметка — подтверждение отправки драйверу.')
                 self.ui(loaded)
             except Exception:
-                self.ui(lambda:self.note('Не удалось обновить заказы. Показана сохранённая история; проверьте подключение.'))
+                def failed():
+                    self.connection.set('Нет соединения с amoCRM · Не удалось обновить карточки')
+                    self.connection_label.configure(foreground='#c5203e')
+                    self.note('Показана сохранённая история. Для повторной проверки нажмите «Проверить связь и обновить».')
+                self.ui(failed)
             finally:
                 self.busy=False; self.operation_lock.release(); self.ui(lambda:self.board.set_enabled(True))
         self.background(work)
@@ -505,8 +527,8 @@ def self_test():
     assert len(app.board.hitboxes)==8
     assert len({round(value[0]) for value in app.board.hitboxes})==4
     assert len({round(value[1]) for value in app.board.hitboxes[:4]})==1
-    app.catalog=samples; app.tabs.select(1); root.update(); app.render()
-    assert len(app.boards[0].groups)==0 and len(app.board.hitboxes)==8
+    app.catalog=samples; app.tabs.select(2); root.update(); app.render()
+    assert len(app.boards[1].groups)==0 and len(app.board.hitboxes)==8
     app.article_filters.buttons['CHECK_0'].invoke()
     assert len(app.board.hitboxes)==3
     root.update_idletasks()
@@ -517,6 +539,32 @@ def self_test():
     assert len(app.selected_ids)==8 and len(app.board.selection_boxes)==8
     app.clear_selection(); assert not app.selected_ids
     app.toggle_selection()
+    app.catalog=samples+[{'id':90000099,'createdAt':timestamp-86400,'composition':'(CHECK_0)','hasLabel':False}]
+    app.tabs.select(0); root.update(); app.render()
+    assert app.all_time.get() and len(app.visible_cards)==9
+    assert len(app.board.canvas.find_withtag('day-heading'))==2
+    assert len(app.board.hitboxes)==8
+    assert len({round(value[1]) for value in app.board.hitboxes[:4]})==1
+    app.all_time.set(False); app.render(); assert len(app.visible_cards)==8
+    app.all_time.set(True)
+    # Реальные переходы ошибки/повторного чтения с mock API, без печати и сети.
+    app.background=lambda callback:callback()
+    original_request=app.worker.request
+    def offline_request(*_): raise OSError('offline test')
+    app.worker.request=offline_request
+    app.reload()
+    while not app.actions.empty(): app.actions.get_nowait()()
+    assert app.connection.get().startswith('Нет соединения') and len(app.catalog)==9
+    requests=[]
+    def online_request(path):
+        requests.append(path); return json.dumps({'items':samples}).encode()
+    app.worker.request=online_request
+    app.reload()
+    while not app.actions.empty(): app.actions.get_nowait()()
+    assert requests==['leads?from=0'] and len(app.catalog)==8
+    assert app.connection.get().startswith('Есть соединение')
+    assert not (app.worker.DATA/'state.json').exists()
+    app.worker.request=original_request
     saved=[]
     probe=PrinterPanel(root,{'enabled':False,'routes':[]},lambda:['CHECK_SKU'],lambda cfg,auto:saved.append(cfg) or True,lambda _:None)
     probe.set_printers(['Self-test printer'])
@@ -534,7 +582,7 @@ def self_test():
     assert app.printers.winfo_exists() and app.log.winfo_exists()
     root.destroy()
     out=Path(sys.argv[sys.argv.index('--self-test')+1])
-    out.write_text(json.dumps({'ok':True,'dpapi':True,'pdf':True,'barcode':True,'printerHelper':True,'windowControls':True,'printerRows':4,'printersInSettings':True,'articleButtonRows':3,'articleButtons':True,'continuousGrid':True,'printTabs':True,'articleFilter':True,'printerPersistence':True,'multiSelect':True}),encoding='utf-8')
+    out.write_text(json.dumps({'ok':True,'dpapi':True,'pdf':True,'barcode':True,'printerHelper':True,'windowControls':True,'printerRows':4,'printersInSettings':True,'articleButtonRows':3,'articleButtons':True,'continuousGrid':True,'printTabs':True,'allOrders':True,'dayGroups':True,'connectionIndicator':True,'articleFilter':True,'printerPersistence':True,'multiSelect':True}),encoding='utf-8')
 
 if __name__=='__main__':
     if '--self-test' in sys.argv: self_test()

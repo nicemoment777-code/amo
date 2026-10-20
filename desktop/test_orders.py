@@ -5,12 +5,29 @@ import tempfile
 import unittest
 
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'ops'))
-from orders_model import order_groups, parse_period, sku_color, print_status, order_title, print_tab_groups
+from orders_model import order_groups, parse_period, sku_color, print_status, order_title, print_tab_groups, group_by_day
 from print_actions import manual_print, manual_batch
 from printer_routing import normalize_routes, choose_printer, load_routes, PrinterRoutingError
 from printer_panel import routes_from_rows, available_articles, EMPTY_PRINTER
 
 class BoardTests(unittest.TestCase):
+    def test_days_use_moscow_midnight_and_preserve_status_colors_and_unique_cards(self):
+        import copy
+        start,end=parse_period('20.10.2026','00:00','20.10.2026','23:59')
+        items=[{'id':1,'createdAt':start-1,'composition':'(pink)','hasLabel':True},
+               {'id':2,'createdAt':start,'composition':'(pink); (blue)','hasLabel':True},
+               {'id':3,'createdAt':start+1,'composition':'','hasLabel':False},
+               {'id':4,'createdAt':start-86400,'composition':'(blue)','hasLabel':True}]
+        state={'printed':{'1':{'status':'submitted'}},'uncertain':{'2':{}}}
+        before=copy.deepcopy((items,state))
+        grouped=group_by_day(order_groups(items+[items[0]],0,end,state))
+        self.assertEqual([g['day'] for g in grouped],['20.10.2026','20.10.2026','19.10.2026','19.10.2026'])
+        self.assertEqual({v['id'] for g in grouped[:2] for v in g['items']},{2,3})
+        self.assertEqual(sum(len(g['items']) for g in grouped),4)
+        for group in grouped: self.assertEqual(group['colors'],sku_color(group['skus']))
+        self.assertEqual([v['id'] for g in print_tab_groups(grouped,True) for v in g['items']],[1])
+        self.assertEqual((items,state),before)
+
     def test_unprinted_and_carrier_filters_compose_without_touching_history(self):
         values=[{'id':1,'createdAt':5,'composition':'(A)','hasLabel':True,'deliveryService':'cdek'},
                 {'id':2,'createdAt':5,'composition':'(A)','hasLabel':True,'deliveryService':'yandex'},
