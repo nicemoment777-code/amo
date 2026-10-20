@@ -39,7 +39,7 @@ from orders_model import MOSCOW, read_json, order_groups, parse_period, merge_ca
 from orders_view import OrdersBoard, DatePicker, BG, INK, MUTED
 from printer_routing import load_routes, normalize_routes, choose_printer, PrinterRoutingError
 from printer_panel import PrinterPanel
-from rounded_controls import RoundedNotebook, RoundedArticleCards
+from rounded_controls import RoundedNotebook, RoundedArticleCards, RoundedButton
 from order_diagnostics import error_reasons
 from auto_print import auto_print_enabled, set_auto_print
 from pdf_archive import archive_directory, archive_labels
@@ -137,7 +137,8 @@ class App:
         ttk.Label(self.browse_actions,text='Доставка').pack(side='left',padx=(12,8))
         self.delivery_buttons={}
         for value,label in [('Яндекс','Яндекс'),('СДЭК','СДЭК'),('Все доставки','Все заявки')]:
-            button=ttk.Button(self.browse_actions,text=label,command=lambda v=value:self.carrier.set(v))
+            color,ink={'Яндекс':('#ffb52e',INK),'СДЭК':('#199653','white'),'Все доставки':('#dce0e6',INK)}[value]
+            button=RoundedButton(self.browse_actions,text=label,command=lambda v=value:self.carrier.set(v),color=color,foreground=ink)
             button.pack(side='left',padx=(0,6)); self.delivery_buttons[value]=button
         self.carrier.trace_add('write',lambda *_:self.render(True))
         self.all_time=tk.BooleanVar(value=True)
@@ -157,16 +158,17 @@ class App:
             ttk.Button(filters,text='▦',width=2,command=lambda v=day:DatePicker(root,v)).pack(side='left',padx=(2,6))
             ttk.Spinbox(filters,textvariable=clock,values=[f'{h:02}:{m:02}' for h in range(24) for m in (0,30)],width=6,wrap=True).pack(side='left',padx=(0,16))
         ttk.Label(filters,text='МСК',foreground=MUTED).pack(side='left',padx=(0,12))
-        ttk.Button(filters,text='Показать период',style='Accent.TButton',command=self.show_period).pack(side='left')
-        ttk.Button(filters,text='Сегодня',command=self.today).pack(side='left',padx=6)
-        ttk.Button(filters,text='Последние 2 часа',command=self.last_two_hours).pack(side='left')
+        RoundedButton(filters,text='Показать период',command=self.show_period).pack(side='left')
+        self.today_button=RoundedButton(filters,text='Сегодня · 0',command=self.today,color='#199653',foreground='white')
+        self.today_button.pack(side='left',padx=6)
+        RoundedButton(filters,text='Последние 2 часа',command=self.last_two_hours).pack(side='left')
         search_row=ttk.Frame(frame); search_row.pack(fill='x',pady=(8,0))
         ttk.Label(search_row,text='Номер заявки').pack(side='left',padx=(0,8))
         self.search_text=tk.StringVar()
-        self.search_entry=ttk.Entry(search_row,textvariable=self.search_text,width=25)
-        self.search_entry.pack(side='left'); self.search_entry.bind('<Return>',lambda _:self.search_orders())
-        ttk.Button(search_row,text='Поиск',command=self.search_orders).pack(side='left',padx=6)
-        ttk.Button(search_row,text='Сбросить',command=self.clear_search).pack(side='left')
+        self.search_entry=ttk.Entry(search_row,textvariable=self.search_text,width=34,font=('Segoe UI',12))
+        self.search_entry.pack(side='left',ipady=4); self.search_entry.bind('<Return>',lambda _:self.search_orders())
+        RoundedButton(search_row,text='Поиск',command=self.search_orders).pack(side='left',padx=6)
+        RoundedButton(search_row,text='Сбросить',command=self.clear_search).pack(side='left')
         article_heading=ttk.Frame(frame); article_heading.pack(fill='x',pady=(10,0))
         ttk.Label(article_heading,text='Карточки по артикулу · не напечатано').pack(side='left')
         ttk.Button(article_heading,text='Обновить артикулы',command=self.refresh_articles).pack(side='right')
@@ -315,7 +317,10 @@ class App:
                 service=delivery_service(item)
                 if service in delivery_counts: delivery_counts[service]+=1
         for value,label,key in [('Яндекс','Яндекс','yandex'),('СДЭК','СДЭК','cdek'),('Все доставки','Все заявки','all')]:
-            self.delivery_buttons[value].configure(text=f'{label} · {delivery_counts[key]}',style='Accent.TButton' if value==self.carrier.get() else 'TButton')
+            self.delivery_buttons[value].configure(text=f'{label} · {delivery_counts[key]}',selected=value==self.carrier.get())
+        day_start,day_end=parse_period(datetime.now(MOSCOW).strftime('%d.%m.%Y'),'00:00',datetime.now(MOSCOW).strftime('%d.%m.%Y'),'23:59')
+        today_count=sum(day_start<=item.get('createdAt',0)<=day_end and (not carrier or delivery_service(item)==carrier) for item in catalog)
+        self.today_button.configure(text=f'Сегодня · {today_count}')
         receipts=receipt_statuses(self.worker.DATA)
         previous_articles=set(self.article_pending)
         self.article_pending=pending_by_article(order_groups(catalog,start,end,state,receipts,carrier=carrier))

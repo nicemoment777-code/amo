@@ -4,6 +4,43 @@ from tkinter import ttk, font as tkfont
 from orders_view import BG, INK, rounded
 
 
+class RoundedButton(tk.Canvas):
+    """Кнопка с постоянным цветом и видимой рамкой выбранного фильтра."""
+    def __init__(self,parent,text,command,color='#dce0e6',foreground=INK):
+        super().__init__(parent,bg=BG,height=38,highlightthickness=0,takefocus=True,cursor='hand2')
+        self.label=text; self.command=command; self.color=color; self.ink=foreground; self.selected=False
+        self.bind('<Configure>',lambda _:self.draw())
+        self.bind('<Button-1>',lambda _:self.invoke())
+        self.bind('<Return>',lambda _:self.invoke())
+        self.bind('<space>',lambda _:self.invoke())
+        self.bind('<FocusIn>',lambda _:self.draw()); self.bind('<FocusOut>',lambda _:self.draw())
+        self.configure(text=text)
+
+    def configure(self,cnf=None,**kw):
+        if 'text' in kw:
+            self.label=kw.pop('text')
+            kw['width']=tkfont.Font(family='Segoe UI',size=10,weight='bold').measure(self.label)+28
+        if 'selected' in kw: self.selected=kw.pop('selected')
+        result=super().configure(cnf,**kw)
+        if hasattr(self,'label'): self.draw()
+        return result
+
+    config=configure
+
+    def cget(self,key):
+        return self.label if key=='text' else super().cget(key)
+
+    def invoke(self):
+        self.focus_set(); return self.command()
+
+    def draw(self):
+        self.delete('all')
+        width=max(self.winfo_width(),int(super().cget('width')))
+        rounded(self,2,2,width-4,34,11,fill=self.color,
+                outline=INK if self.selected or self.focus_get()==self else '',width=2)
+        self.create_text(width/2,19,text=self.label,font=('Segoe UI',10,'bold'),fill=self.ink)
+
+
 class RoundedNotebook(ttk.Notebook):
     def __init__(self,parent):
         style=ttk.Style(parent)
