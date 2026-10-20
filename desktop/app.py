@@ -159,7 +159,7 @@ class App:
             ttk.Spinbox(filters,textvariable=clock,values=[f'{h:02}:{m:02}' for h in range(24) for m in (0,30)],width=6,wrap=True).pack(side='left',padx=(0,16))
         ttk.Label(filters,text='МСК',foreground=MUTED).pack(side='left',padx=(0,12))
         RoundedButton(filters,text='Показать период',command=self.show_period).pack(side='left')
-        self.today_button=RoundedButton(filters,text='Сегодня · 0',command=self.today,color='#199653',foreground='white')
+        self.today_button=RoundedButton(filters,text='Сегодня',command=self.today,color='#199653',foreground='white')
         self.today_button.pack(side='left',padx=6)
         RoundedButton(filters,text='Последние 2 часа',command=self.last_two_hours).pack(side='left')
         search_row=ttk.Frame(frame); search_row.pack(fill='x',pady=(8,0))
@@ -171,14 +171,14 @@ class App:
         RoundedButton(search_row,text='Сбросить',command=self.clear_search).pack(side='left')
         article_heading=ttk.Frame(frame); article_heading.pack(fill='x',pady=(10,0))
         ttk.Label(article_heading,text='Карточки по артикулу · не напечатано').pack(side='left')
-        ttk.Button(article_heading,text='Обновить артикулы',command=self.refresh_articles).pack(side='right')
+        ttk.Button(article_heading,text='Обновить артикулы',command=self.refresh_articles).pack(side='left',padx=16)
         self.article_filters=RoundedArticleCards(frame)
         self.article_filters.pack(fill='x',pady=(4,0))
         self.printer_panel=None
         summary=ttk.Frame(frame); summary.pack(fill='x',pady=(16,0))
         self.counts=tk.StringVar(value='Загружаем заказы…')
-        ttk.Label(summary,textvariable=self.counts,font=('Segoe UI',11,'bold')).pack(side='left')
-        ttk.Label(summary,text='✓ Отправлено     ! Нет подтверждения',foreground=MUTED).pack(side='right')
+        ttk.Label(summary,text='✓ Отправлено     ! Нет подтверждения',foreground=MUTED).pack(side='left',anchor='n')
+        ttk.Label(summary,textvariable=self.counts,font=('Segoe UI',11,'bold'),justify='left').pack(side='right')
         self.tabs=RoundedNotebook(root); self.tabs.pack(fill='both',expand=True,padx=28)
         self.boards=[]
         for label in ['Все заявки','✓ Напечатанные','! Ошибки / не напечатаны']:
@@ -317,10 +317,7 @@ class App:
                 service=delivery_service(item)
                 if service in delivery_counts: delivery_counts[service]+=1
         for value,label,key in [('Яндекс','Яндекс','yandex'),('СДЭК','СДЭК','cdek'),('Все доставки','Все заявки','all')]:
-            self.delivery_buttons[value].configure(text=f'{label} · {delivery_counts[key]}',selected=value==self.carrier.get())
-        day_start,day_end=parse_period(datetime.now(MOSCOW).strftime('%d.%m.%Y'),'00:00',datetime.now(MOSCOW).strftime('%d.%m.%Y'),'23:59')
-        today_count=sum(day_start<=item.get('createdAt',0)<=day_end and (not carrier or delivery_service(item)==carrier) for item in catalog)
-        self.today_button.configure(text=f'Сегодня · {today_count}')
+            self.delivery_buttons[value].configure(text=f'{label} · {delivery_counts[key]}' if key=='all' else label,selected=value==self.carrier.get())
         receipts=receipt_statuses(self.worker.DATA)
         previous_articles=set(self.article_pending)
         self.article_pending=pending_by_article(order_groups(catalog,start,end,state,receipts,carrier=carrier))
@@ -337,9 +334,11 @@ class App:
         self.visible_cards=cards
         self.selected_ids.intersection_update(str(v['id']) for v in cards if v['canPrint'])
         self.batch_button.configure(text=f'Печать выбранных ({len(self.selected_ids)})',state='normal' if self.selected_ids and not self.busy else 'disabled')
-        confirmed=sum(v['confirmed'] for v in cards)
-        days=len({g['day'] for g in groups})
-        self.counts.set(f'Заказов: {len(cards)}   ·   Дней: {days}   ·   Отправлено: {confirmed}   ·   Без подтверждения: {len(cards)-confirmed}')
+        if self.all_time.get():
+            date_label='с 01.10.2026 по '+datetime.now(MOSCOW).strftime('%d.%m.%Y')
+        else:
+            date_label=self.day_from.get() if self.day_from.get()==self.day_to.get() else self.day_from.get()+' — '+self.day_to.get()
+        self.counts.set(f'Дата: {date_label}\nВсего заявок: {totals[0]}\nНапечатанных заявок всего: {totals[1]}')
         self.refresh_article_buttons()
         if self.printer_panel: self.printer_panel.refresh_articles()
         for index,board in enumerate(self.boards):
@@ -706,7 +705,7 @@ def self_test():
     app.card_filter={'NOT_SELECTED'}; app.render(); assert not app.board.hitboxes
     app.reset_article_filter(); assert len(app.board.hitboxes)==8
     app.carrier.set('Яндекс'); assert len(app.board.hitboxes)==4 and len(app.article_pending['CHECK_0'])==1
-    assert str(app.delivery_buttons['Яндекс'].cget('text')).endswith('4')
+    assert app.delivery_buttons['Яндекс'].cget('text')=='Яндекс'
     app.carrier.set('СДЭК'); assert len(app.board.hitboxes)==4 and len(app.article_pending['CHECK_0'])==2
     app.carrier.set('Все доставки'); assert len(app.board.hitboxes)==8
     app.search_text.set('0003'); app.search_orders()
