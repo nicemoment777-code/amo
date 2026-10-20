@@ -14,6 +14,8 @@ from contextlib import contextmanager
 from print_order import group_key, grouped_print_order
 from printer_routing import load_routes, choose_printer
 from auto_print import auto_print_enabled
+from pdf_archive import archive_directory, load_pdf
+from print_journal import append_entry
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = Path(os.environ.get('SNOWBRICK_DATA_DIR', str(ROOT / 'data' / 'printing')))
@@ -45,7 +47,7 @@ def prepare(item, for_print=False, variant=''):
     from label_pdf import prepare_label
     source = DATA / f"label-{item['id']}-original.pdf"
     target = DATA / f"label-{item['id']}-print{variant}.pdf"
-    source.write_bytes(request(f"label/{item['id']}"))
+    source.write_bytes(load_pdf(archive_directory(),item,request))
     details = prepare_label(source, target, item['composition'])
     prefix = target.with_suffix('')
     subprocess.run([str(POPPLER), '-r', '203', '-singlefile', '-png', str(target), str(prefix)], check=True, capture_output=True)
@@ -135,6 +137,7 @@ def run_once():
             del state['pending'][key]
             atomic_json(state_path, state)
             print_label(image, details, printer)
+            append_entry(DATA,item,printer,'auto')
             request('complete', {'id':item['id']})
             state['printed'][key] = {'at': int(time.time()), 'status': 'submitted', 'printer':printer}
             del state['uncertain'][key]

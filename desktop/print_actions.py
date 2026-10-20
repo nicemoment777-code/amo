@@ -3,6 +3,7 @@ import json
 import time
 import uuid
 from print_order import grouped_print_order
+from print_journal import append_entry
 
 def manual_print(worker, item_id, expected_printer=None):
     with worker.agent_lock():
@@ -32,6 +33,7 @@ def _manual_print_locked(worker, item_id, expected_printer=None):
     state['printed'][key]={'at':int(time.time()),'status':'submitted','manual':True,'printer':printer}
     state['uncertain'].pop(key,None)
     worker.atomic_json(path,state)
+    append_entry(worker.DATA,item,printer,'manual',receipt.name)
     server_recorded=True
     try: worker.request('complete',{'id':int(key)})
     except Exception: server_recorded=False

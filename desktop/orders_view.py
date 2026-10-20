@@ -71,7 +71,7 @@ class OrdersBoard(ttk.Frame):
     def draw(self):
         c=self.canvas; c.delete('all'); self.hitboxes=[]; self.selection_boxes=[]; self.error_boxes=[]
         width=max(c.winfo_width(),1040); gap=6; left=8; columns=12
-        cardw=(width-2*left-(columns-1)*gap)/columns; cardh=154; y=10
+        cardw=(width-2*left-(columns-1)*gap)/columns; cardh=174; y=10
         if not self.groups:
             c.create_text(width/2,110,text='Пока нет заказов',font=('Segoe UI',24,'bold'),fill=INK)
             c.create_text(width/2,154,text=self.empty,font=('Segoe UI',11),fill=MUTED)
@@ -108,19 +108,21 @@ class OrdersBoard(ttk.Frame):
         c.create_text(x+6,y+11,anchor='w',text=str(item['id']),font=('Segoe UI',6),fill=secondary)
         number=order_title(item); size=9
         while size>6 and tkfont.Font(family='Segoe UI',size=size,weight='bold').measure(number)>w-12: size-=1
-        c.create_text(x+w/2,y+28,text=number,font=('Segoe UI',size,'bold'),fill=fg)
+        digits=''.join(char for char in str(item.get('orderNumber') or item['id']) if char in '0123456789')
+        c.create_text(x+w/2,y+30,text=digits[-4:],font=('Segoe UI',18,'bold'),fill=fg,tags='order-suffix')
+        c.create_text(x+w/2,y+51,text=number,font=('Segoe UI',size,'bold'),fill=fg)
         sku='; '.join(item['skus']) or 'Без артикула'
         maxchars=max(8,int((w-12)/6)); lines=[]; remainder=sku
         while remainder and len(lines)<2:
             lines.append(remainder[:maxchars]); remainder=remainder[maxchars:]
         if remainder: lines[-1]=self.fit(lines[-1],maxchars-1)+'…'
-        c.create_text(x+6,y+43,anchor='nw',text='\n'.join(lines),font=('Segoe UI',8,'bold'),fill=fg)
+        c.create_text(x+6,y+65,anchor='nw',text='\n'.join(lines),font=('Segoe UI',8,'bold'),fill=fg)
         carrier={'cdek':'СДЭК','yandex':'Яндекс','unknown':'Без доставки'}[delivery_service(item)]
-        c.create_text(x+6,y+78,anchor='w',text=carrier,font=('Segoe UI',7,'bold'),fill=secondary)
+        c.create_text(x+6,y+100,anchor='w',text=carrier,font=('Segoe UI',7,'bold'),fill=secondary)
         date=datetime.fromtimestamp(item['createdAt'],MOSCOW).strftime('%d.%m %H:%M')
-        c.create_text(x+6,y+92,anchor='w',text=date,font=('Segoe UI',7),fill=fg)
+        c.create_text(x+6,y+114,anchor='w',text=date,font=('Segoe UI',7),fill=fg)
         status='Отправлено' if item['confirmed'] else ('К печати' if item['canPrint'] else 'Нет PDF/артикула')
-        c.create_text(x+6,y+106,anchor='w',text=status,font=('Segoe UI',6),fill=secondary)
+        c.create_text(x+6,y+128,anchor='w',text=status,font=('Segoe UI',6),fill=secondary)
         by=y+h-30; bh=24; bx=x+6
         show_reason=not item['confirmed'] and self.on_error is not None
         bw=w-12-(28 if show_reason else 0)

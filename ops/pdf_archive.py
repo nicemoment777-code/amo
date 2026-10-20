@@ -20,19 +20,45 @@ def archive_directory():
     return Path(desktop.value)/'Этикетки доставка'
 
 
-def save_pdf(root,item,content):
+def validate_pdf(content):
     from pypdf import PdfReader
-    service=item.get('deliveryService')
-    if service not in FOLDERS: raise ValueError('Не определена служба доставки')
-    key=str(item['id'])
-    if not key.isascii() or not key.isdigit(): raise ValueError('Некорректный ID заявки')
     if len(content)>10_000_000 or not content.startswith(b'%PDF-'):
         raise ValueError('Получен некорректный PDF')
     reader=PdfReader(io.BytesIO(content))
     if reader.is_encrypted or not len(reader.pages): raise ValueError('PDF не читается')
+
+
+def load_pdf(root,item,download):
+    """Сначала проверенный исходник нужной доставки; иначе загрузка и архивирование."""
+    service=item.get('deliveryService'); key=str(item['id'])
+    if service not in FOLDERS: raise ValueError('Не определена служба доставки')
+    if not key.isascii() or not key.isdigit(): raise ValueError('Некорректный ID заявки')
+    folder=Path(root)/FOLDERS[service]
+    candidates=sorted(folder.glob(key+'-*.pdf'),key=lambda path:path.stat().st_mtime_ns,reverse=True)
+    for path in candidates:
+        try:
+            if path.stat().st_size>10_000_000: continue
+            content=path.read_bytes()
+            expected=key+'-'+hashlib.sha256(content).hexdigest()[:16]+'.pdf'
+            if path.name!=expected: continue
+            validate_pdf(content)
+            return content
+        except Exception:
+            continue
+    content=download('label/'+key)
+    save_pdf(root,item,content)
+    return content
+
+
+def save_pdf(root,item,content):
+    service=item.get('deliveryService')
+    if service not in FOLDERS: raise ValueError('Не определена служба доставки')
+    key=str(item['id'])
+    if not key.isascii() or not key.isdigit(): raise ValueError('Некорректный ID заявки')
+    validate_pdf(content)
     folder=Path(root)/FOLDERS[service]; folder.mkdir(parents=True,exist_ok=True)
     target=folder/(key+'-'+hashlib.sha256(content).hexdigest()[:16]+'.pdf')
-    if target.exists(): return target
+    if target.exists() and target.read_bytes()==content: return target
     temp=None
     try:
         with tempfile.NamedTemporaryFile(dir=folder,prefix='.',suffix='.tmp',delete=False) as output:

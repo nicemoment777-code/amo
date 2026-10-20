@@ -2,9 +2,11 @@ import io
 from pathlib import Path
 import tempfile
 import unittest
+import sys
+sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'ops'))
 from urllib.error import URLError
 from pypdf import PdfWriter
-from pdf_archive import archive_labels,save_pdf
+from pdf_archive import archive_labels,save_pdf,load_pdf
 
 
 def pdf(width=74):
@@ -12,6 +14,37 @@ def pdf(width=74):
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_printing_repairs_damaged_archive_with_same_original_bytes(self):
+        with tempfile.TemporaryDirectory() as root:
+            item={'id':1,'deliveryService':'cdek'}; content=pdf()
+            path=save_pdf(root,item,content); path.write_bytes(b'broken')
+            self.assertEqual(load_pdf(root,item,lambda _:content),content)
+            self.assertEqual(path.read_bytes(),content)
+            self.assertEqual(load_pdf(root,item,lambda _:self.fail('Repaired cache must be reused')),content)
+    def test_printing_prefers_local_pdf_without_downloading_again(self):
+        with tempfile.TemporaryDirectory() as root:
+            item={'id':1,'deliveryService':'cdek'}; content=pdf()
+            save_pdf(root,item,content)
+            self.assertEqual(load_pdf(root,item,lambda _:self.fail('Local PDF must be used')),content)
+
+    def test_printing_downloads_missing_pdf_and_saves_for_next_print(self):
+        with tempfile.TemporaryDirectory() as root:
+            item={'id':2,'deliveryService':'yandex'}; content=pdf(); calls=[]
+            self.assertEqual(load_pdf(root,item,lambda path:calls.append(path) or content),content)
+            self.assertEqual(calls,['label/2'])
+            self.assertEqual(load_pdf(root,item,lambda _:self.fail('Already archived')),content)
+            self.assertEqual(len(list((Path(root)/'Яндекс').glob('*.pdf'))),1)
+
+    def test_printing_rejects_changed_cached_bytes_and_never_uses_other_carrier(self):
+        with tempfile.TemporaryDirectory() as root:
+            item={'id':1,'deliveryService':'cdek'}
+            damaged=save_pdf(root,item,pdf()); damaged.write_bytes(b'%PDF-broken')
+            wrong=save_pdf(root,{'id':1,'deliveryService':'yandex'},pdf(90))
+            calls=[]; content=pdf(80)
+            self.assertEqual(load_pdf(root,item,lambda path:calls.append(path) or content),content)
+            self.assertEqual(calls,['label/1']); self.assertTrue(wrong.exists())
+            self.assertEqual(damaged.read_bytes(),b'%PDF-broken')
+
     def test_archive_routes_originals_and_restarts_without_redownloading(self):
         with tempfile.TemporaryDirectory() as root:
             items=[{'id':1,'hasLabel':True,'deliveryService':'cdek'}, {'id':2,'hasLabel':True,'deliveryService':'yandex'},

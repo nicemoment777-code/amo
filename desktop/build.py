@@ -37,7 +37,7 @@ def build():
           '--paths',str(ROOT/'ops'),'--paths',str(ROOT/'data'/'printing'/'vendor'),
           '--hidden-import','pypdf','--hidden-import','reportlab.pdfbase.ttfonts','--hidden-import','PIL.Image','--hidden-import','zxingcpp',
           '--collect-all','reportlab','--collect-all','pypdf']
-    for name in ['print-agent.py','label_pdf.py','print_order.py','printer_routing.py','auto_print.py','print-image.ps1']:
+    for name in ['print-agent.py','label_pdf.py','print_order.py','printer_routing.py','auto_print.py','pdf_archive.py','print_journal.py','print-image.ps1']:
         args+=['--add-data',str(ROOT/'ops'/name)+separator+'ops']
     for file in (RUNTIME/'native'/'poppler'/'Library'/'bin').iterdir():
         if file.suffix.lower()=='.dll' or file.name=='pdftoppm.exe':

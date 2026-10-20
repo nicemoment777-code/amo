@@ -44,6 +44,7 @@ from order_diagnostics import error_reasons
 from auto_print import auto_print_enabled, set_auto_print
 from pdf_archive import archive_directory, archive_labels
 from orders_model import VISIBLE_FROM
+from print_journal import read_entries
 
 class Blob(ctypes.Structure):
     _fields_ = [('size', wintypes.DWORD), ('data', ctypes.POINTER(ctypes.c_byte))]
@@ -104,7 +105,7 @@ class App:
         try: self.routes=load_routes(self.worker.DATA)
         except PrinterRoutingError as e:
             self.routes={'enabled':True,'routes':[]}; routing_error=str(e)
-        self.card_filter=None; self.carrier=tk.StringVar(value='Все доставки')
+        self.card_filter=None; self.carrier=tk.StringVar(value='Все доставки'); self.search_query=''
         self.selection_mode=False; self.selected_ids=set(); self.visible_cards=[]; self.article_pending={}
         self.article_catalog=set(read_json(self.worker.DATA/'article-catalog.json',[]))
         self.catalog=[item for item in read_json(self.worker.DATA/'order-catalog.json',[]) if item.get('createdAt',0)>=VISIBLE_FROM]
@@ -126,16 +127,10 @@ class App:
         ttk.Button(title,text='Настройки',command=self.settings).pack(side='right')
         ttk.Checkbutton(title,text='Автоматическая печать',variable=self.auto_print,command=self.toggle_auto_print).pack(side='right',padx=16)
         ttk.Label(title,text='СНЕГОСТРОЙ',foreground=MUTED,font=('Segoe UI',11,'bold')).pack(side='right',padx=24)
-        ttk.Label(frame,text='Заявки с 01.10.2026  /  По дням поступления · МСК',foreground=MUTED).pack(anchor='w',pady=(0,14))
-        connection_row=ttk.Frame(frame); connection_row.pack(fill='x',pady=(0,10))
         self.connection=tk.StringVar(value='Соединение с amoCRM: ещё не проверено')
-        self.connection_label=ttk.Label(connection_row,textvariable=self.connection,foreground=MUTED)
-        self.connection_label.pack(side='left')
-        ttk.Button(connection_row,text='Проверить связь и обновить',command=lambda:self.reload(True)).pack(side='right')
-        archive_row=ttk.Frame(frame); archive_row.pack(fill='x',pady=(0,8))
+        self.connection_label=ttk.Label(title,textvariable=self.connection,foreground=MUTED,font=('Segoe UI',9),wraplength=350)
+        self.connection_label.pack(side='left',padx=24)
         self.archive_status=tk.StringVar(value='PDF: постоянный архив на рабочем столе → Этикетки доставка')
-        ttk.Label(archive_row,textvariable=self.archive_status,font=('Segoe UI',9),foreground=MUTED).pack(side='left')
-        ttk.Button(archive_row,text='Открыть папку PDF',command=self.open_archive).pack(side='right')
         self.browse_actions=ttk.Frame(frame); self.browse_actions.pack(fill='x',pady=(0,10))
         self.select_button=ttk.Button(self.browse_actions,text='Выбрать несколько',command=self.toggle_selection)
         self.select_button.pack(side='left')
@@ -165,6 +160,13 @@ class App:
         ttk.Button(filters,text='Показать период',style='Accent.TButton',command=self.show_period).pack(side='left')
         ttk.Button(filters,text='Сегодня',command=self.today).pack(side='left',padx=6)
         ttk.Button(filters,text='Последние 2 часа',command=self.last_two_hours).pack(side='left')
+        search_row=ttk.Frame(frame); search_row.pack(fill='x',pady=(8,0))
+        ttk.Label(search_row,text='Номер заявки').pack(side='left',padx=(0,8))
+        self.search_text=tk.StringVar()
+        self.search_entry=ttk.Entry(search_row,textvariable=self.search_text,width=25)
+        self.search_entry.pack(side='left'); self.search_entry.bind('<Return>',lambda _:self.search_orders())
+        ttk.Button(search_row,text='Поиск',command=self.search_orders).pack(side='left',padx=6)
+        ttk.Button(search_row,text='Сбросить',command=self.clear_search).pack(side='left')
         article_heading=ttk.Frame(frame); article_heading.pack(fill='x',pady=(10,0))
         ttk.Label(article_heading,text='Карточки по артикулу · не напечатано').pack(side='left')
         ttk.Button(article_heading,text='Обновить артикулы',command=self.refresh_articles).pack(side='right')
@@ -186,7 +188,7 @@ class App:
         footer=ttk.Frame(root,padding=(28,10)); footer.pack(side='bottom',fill='x',before=frame)
         self.status=tk.StringVar(value='Выберите принтер в настройках. Проверка заявок каждые 5 минут.')
         ttk.Label(footer,textvariable=self.status,foreground=MUTED).pack(side='left')
-        ttk.Button(footer,text='Обновить',command=lambda:self.reload()).pack(side='right')
+        ttk.Button(footer,text='Проверить связь и обновить',command=lambda:self.reload()).pack(side='right')
         self.startup=tk.BooleanVar(value=self.config.get('startup',False))
         self.settings_log=[]
         root.protocol('WM_DELETE_WINDOW',self.close)
@@ -255,11 +257,11 @@ class App:
         self.card_filter=None; self.render(True)
     def refresh_article_buttons(self):
         from orders_model import delivery_service
-        source=self.catalog
+        source=self.search_catalog()
         carrier={'СДЭК':'cdek','Яндекс':'yandex'}.get(self.carrier.get())
         if carrier:
             start,end=self.period()
-            source=[item for item in self.catalog if delivery_service(item)==carrier and start<=item.get('createdAt',0)<=end]
+            source=[item for item in source if delivery_service(item)==carrier and start<=item.get('createdAt',0)<=end]
         values={sku for item in source for sku in sku_set(item)}
         choices=[((), 'Все артикулы', self.card_filter is None, True, ('#ffffff',INK), self.reset_article_filter)]
         unknown=any(not sku_set(item) for item in source)
@@ -293,14 +295,27 @@ class App:
         return max(start,VISIBLE_FROM),end
     def show_period(self):
         self.all_time.set(False); self.reload(True)
+    def search_catalog(self):
+        if not self.search_query: return self.catalog
+        return [item for item in self.catalog if self.search_query in str(item.get('orderNumber') or '') or self.search_query in str(item['id'])]
+    def search_orders(self):
+        raw=self.search_text.get().strip()
+        digits=''.join(char for char in raw if char in '0123456789')
+        if raw and not digits: return self.note('Введите номер заявки или его последние цифры.')
+        self.search_query=digits; self.card_filter=None; self.all_time.set(True)
+        self.carrier.set('Все доставки'); self.tabs.select(0); self.render(True)
+        self.note('Найдено заявок: '+str(len(self.visible_cards)))
+    def clear_search(self):
+        self.search_text.set(''); self.search_query=''; self.render(True)
     def render(self,reset=False):
         try: start,end=self.period()
         except ValueError as e: return self.note(str(e))
         state=read_json(self.worker.DATA/'state.json',{})
+        catalog=self.search_catalog()
         carrier={'СДЭК':'cdek','Яндекс':'yandex','Не указана':'unknown'}.get(self.carrier.get())
         from orders_model import delivery_service
         delivery_counts={'cdek':0,'yandex':0,'all':0}
-        for item in self.catalog:
+        for item in catalog:
             if start<=item.get('createdAt',0)<=end:
                 delivery_counts['all']+=1
                 service=delivery_service(item)
@@ -308,8 +323,8 @@ class App:
         for value,label,key in [('Яндекс','Яндекс','yandex'),('СДЭК','СДЭК','cdek'),('Все доставки','Все заявки','all')]:
             self.delivery_buttons[value].configure(text=f'{label} · {delivery_counts[key]}',style='Accent.TButton' if value==self.carrier.get() else 'TButton')
         receipts=receipt_statuses(self.worker.DATA)
-        self.article_pending=pending_by_article(order_groups(self.catalog,start,end,state,receipts,carrier=carrier))
-        all_groups=group_by_day(order_groups(self.catalog,start,end,state,receipts,self.card_filter,carrier=carrier))
+        self.article_pending=pending_by_article(order_groups(catalog,start,end,state,receipts,carrier=carrier))
+        all_groups=group_by_day(order_groups(catalog,start,end,state,receipts,self.card_filter,carrier=carrier))
         grouped_tabs=[all_groups,print_tab_groups(all_groups,True),print_tab_groups(all_groups,False)]
         totals=[sum(len(g['items']) for g in groups) for groups in grouped_tabs]
         self.tabs.tab(0,text=f'Все заявки · {totals[0]}')
@@ -328,6 +343,7 @@ class App:
         for index,board in enumerate(self.boards):
             board.selection_mode=self.selection_mode; board.selected=set(self.selected_ids); board.enabled=not self.busy
             board.set_groups(grouped_tabs[index],reset_scroll=reset,empty='Нет заказов для этой вкладки и выбранных фильтров. Измените период, доставку или артикулы.')
+        if self.settings_window and self.settings_window.winfo_exists(): self.refresh_journal()
     def today(self):
         self.all_time.set(False)
         value=datetime.now(MOSCOW).strftime('%d.%m.%Y')
@@ -388,7 +404,7 @@ class App:
         self.root.after(300000,self.periodic_view)
     def settings(self):
         if self.settings_window and self.settings_window.winfo_exists():
-            self.settings_window.deiconify(); return self.settings_window.lift()
+            self.refresh_journal(); self.settings_window.deiconify(); return self.settings_window.lift()
         window=tk.Toplevel(self.root); self.settings_window=window; window.title('Настройки печати'); window.geometry('1120x700'); window.minsize(1000,650); window.transient(self.root)
         window.protocol('WM_DELETE_WINDOW',window.withdraw)
         container=ttk.Frame(window,padding=24); container.pack(fill='both',expand=True)
@@ -398,6 +414,31 @@ class App:
         frame=ttk.Frame(self.settings_tabs,padding=16)
         self.settings_tabs.add(routes_page,text='Принтеры и артикулы')
         self.settings_tabs.add(frame,text='Общие настройки')
+        archive_page=ttk.Frame(self.settings_tabs,padding=16)
+        self.settings_tabs.add(archive_page,text='Архив PDF')
+        ttk.Label(archive_page,text='Заявки с 01.10.2026 · по дням поступления · московское время',font=('Segoe UI',12,'bold')).pack(anchor='w',pady=(0,20))
+        ttk.Label(archive_page,textvariable=self.archive_status,wraplength=850).pack(anchor='w',pady=(0,16))
+        ttk.Label(archive_page,text='Рабочий стол → Этикетки доставка → СДЭК / Яндекс\nPDF сохраняются постоянно, независимо от автопечати.\nПри печати сначала используется местный PDF, при его отсутствии — загрузка из amoCRM.',wraplength=850).pack(anchor='w',pady=(0,20))
+        ttk.Button(archive_page,text='Открыть папку PDF',command=self.open_archive).pack(anchor='w')
+        journal_page=ttk.Frame(self.settings_tabs,padding=16)
+        self.settings_tabs.add(journal_page,text='Журнал печати')
+        journal_top=ttk.Frame(journal_page); journal_top.pack(fill='x',pady=(0,10))
+        self.journal_summary=tk.StringVar()
+        ttk.Label(journal_top,textvariable=self.journal_summary,font=('Segoe UI',11,'bold')).pack(side='left')
+        ttk.Button(journal_top,text='Обновить журнал',command=self.refresh_journal).pack(side='right')
+        ttk.Label(journal_page,text='Время МСК. Успех — передача драйверу; фактический отпечаток проверяется у принтера. Записи сохраняются после закрытия.',foreground=MUTED).pack(anchor='w',pady=(0,10))
+        journal_body=ttk.Frame(journal_page); journal_body.pack(fill='both',expand=True)
+        columns=('time','order','skus','printer','mode','status')
+        self.journal_tree=ttk.Treeview(journal_body,columns=columns,show='tree headings',selectmode='browse')
+        self.journal_tree.heading('#0',text='День / всего'); self.journal_tree.column('#0',width=190)
+        for key,label,width in [('time','Время',70),('order','Заявка',125),('skus','Артикулы',180),('printer','Принтер',170),('mode','Печать',90),('status','Результат',130)]:
+            self.journal_tree.heading(key,text=label); self.journal_tree.column(key,width=width,minwidth=60)
+        journal_scroll=ttk.Scrollbar(journal_body,orient='vertical',command=self.journal_tree.yview)
+        self.journal_tree.configure(yscrollcommand=journal_scroll.set)
+        journal_scroll.pack(side='right',fill='y'); self.journal_tree.pack(fill='both',expand=True)
+        self.journal_tree.tag_configure('success',foreground='#128348'); self.journal_tree.tag_configure('uncertain',foreground='#c5203e')
+        self.settings_tabs.bind('<<NotebookTabChanged>>',lambda _:self.refresh_journal())
+        self.refresh_journal()
         self.printer_panel=PrinterPanel(routes_page,self.routes,self.known_skus,self.store_routes,self.note)
         self.printer_panel.pack(fill='x')
         self.printer_panel.set_printers(self.printer_names)
@@ -418,6 +459,28 @@ class App:
         ttk.Label(frame,text='Этикетка 1:1 · верхняя полоса 70 × 15 мм · только артикулы.\nПовторная печать — с карточки конкретного заказа.\nЗелёный значок подтверждает передачу драйверу, а не выход бумаги.',foreground=MUTED).pack(anchor='w',pady=18)
         self.log=tk.Text(frame,height=8,wrap='word',font=('Segoe UI',10),bd=0,padx=10,pady=10)
         self.log.pack(fill='both',expand=True); self.log.insert('end','\n'.join(self.settings_log)); self.log.configure(state='disabled')
+    def refresh_journal(self):
+        if not hasattr(self,'journal_tree'): return
+        try: entries=read_entries(self.worker.DATA)
+        except (OSError,ValueError,TypeError,KeyError,AttributeError):
+            self.journal_summary.set('Не удалось прочитать журнал печати.'); return
+        self.journal_tree.delete(*self.journal_tree.get_children())
+        catalog={str(item['id']):item for item in self.catalog}; days={}
+        for entry in entries:
+            day=datetime.fromtimestamp(entry.get('at',0),MOSCOW).strftime('%Y-%m-%d')
+            days.setdefault(day,[]).append(entry)
+        count=sum(entry.get('status')=='submitted' for entry in entries)
+        self.journal_summary.set(f'Отправлено этикеток: {count} · Дней: {len(days)}')
+        for index,(day,values) in enumerate(sorted(days.items(),reverse=True)):
+            total=sum(entry.get('status')=='submitted' for entry in values)
+            parent=self.journal_tree.insert('', 'end',text=f'{datetime.strptime(day,"%Y-%m-%d"):%d.%m.%Y} · {total} шт.',open=index==0)
+            for entry in values:
+                item=catalog.get(str(entry['id']),{})
+                number=entry.get('orderNumber') or item.get('orderNumber')
+                order=('№ '+str(number)) if number else 'amo '+str(entry['id'])
+                skus=entry.get('skus') or sku_set(item)
+                success=entry.get('status')=='submitted'
+                self.journal_tree.insert(parent,'end',values=(datetime.fromtimestamp(entry.get('at',0),MOSCOW).strftime('%H:%M:%S'),order,'; '.join(skus),entry.get('printer') or 'Не записан','Ручная' if entry.get('mode')=='manual' else 'Авто','Передано драйверу' if success else 'Нет подтверждения'),tags=('success' if success else 'uncertain',))
     def save(self):
         self.config.update(printer=self.printer.get(),startup=self.startup.get(),enabled=self.running)
         temp=CONFIG.with_suffix('.tmp'); temp.write_text(json.dumps(self.config,ensure_ascii=False),encoding='utf-8'); os.replace(temp,CONFIG)
@@ -618,9 +681,11 @@ def self_test():
     timestamp=int(datetime.now(MOSCOW).timestamp())
     samples=[{'id':90000000+n,'createdAt':timestamp,'composition':f'(CHECK_{n//3})','hasLabel':True,'deliveryService':'cdek' if n%2==0 else 'yandex'} for n in range(8)]
     grid_probe=[{**samples[0],'id':91000000+n} for n in range(13)]
+    grid_probe[0]['orderNumber']='00001234'
     app.board.set_groups(order_groups(grid_probe,timestamp,timestamp,{})); root.update_idletasks()
     assert len({round(value[0]) for value in app.board.hitboxes})==12
     assert len({round(value[1]) for value in app.board.hitboxes})==2
+    assert '1234' in [app.board.canvas.itemcget(tag,'text') for tag in app.board.canvas.find_withtag('order-suffix')]
     app.board.set_groups(order_groups(samples,timestamp,timestamp,{}))
     root.update_idletasks()
     assert len(app.board.hitboxes)==8
@@ -641,6 +706,9 @@ def self_test():
     assert str(app.delivery_buttons['Яндекс'].cget('text')).endswith('4')
     app.carrier.set('СДЭК'); assert len(app.board.hitboxes)==4 and len(app.article_pending['CHECK_0'])==2
     app.carrier.set('Все доставки'); assert len(app.board.hitboxes)==8
+    app.search_text.set('0003'); app.search_orders()
+    assert len(app.visible_cards)==1 and app.visible_cards[0]['id']==90000003
+    app.clear_search(); assert len(app.visible_cards)==8
     app.toggle_selection(); app.select_all_visible()
     assert len(app.selected_ids)==8 and len(app.board.selection_boxes)==8
     app.clear_selection(); assert not app.selected_ids
@@ -715,6 +783,10 @@ def self_test():
     probe.destroy(); restored.destroy()
     app.settings(); root.update_idletasks()
     assert app.printers.winfo_exists() and app.log.winfo_exists()
+    from print_journal import append_entry
+    assert append_entry(app.worker.DATA,{'id':90000000,'orderNumber':'00001234','composition':'(CHECK_0)'},'Self-test printer','manual')
+    app.refresh_journal()
+    assert '1' in app.journal_summary.get() and len(app.journal_tree.get_children())==1
     root.destroy()
     out=Path(sys.argv[sys.argv.index('--self-test')+1])
     out.write_text(json.dumps({'ok':True,'dpapi':True,'pdf':True,'barcode':True,'printerHelper':True,'windowControls':True,'printerRows':4,'printersInSettings':True,'articleWrap':True,'articleButtons':True,'continuousGrid':True,'printTabs':True,'allOrders':True,'dayGroups':True,'connectionIndicator':True,'errorDetails':True,'autoPrintSwitch':True,'articleCounters':True,'articleBatch':True,'movesToPrinted':True,'articleFilter':True,'printerPersistence':True,'multiSelect':True}),encoding='utf-8')
