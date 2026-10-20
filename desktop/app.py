@@ -602,8 +602,8 @@ class App:
         ready=[item for item in items if item['canPrint']]
         if not ready:
             return messagebox.showinfo('Печать артикула','Готовых этикеток нет. Проверьте кнопку «Причина» на красных карточках.',parent=self.root)
-        self.print_items(ready,f'Артикул: {sku}',len(items)-len(ready))
-    def print_items(self,items,context='',skipped=0):
+        self.print_items(ready,f'Артикул: {sku}',len(items)-len(ready),separate_delivery=True)
+    def print_items(self,items,context='',skipped=0,separate_delivery=False):
         if self.busy: return self.note('Дождитесь завершения текущего действия.')
         if self.printer_panel and self.printer_panel.dirty and not self.printer_panel.save(): return
         if not items: return
@@ -615,6 +615,11 @@ class App:
         except PrinterRoutingError as e: return self.note(str(e))
         by_printer={name:sum(v==name for v in printers.values()) for name in set(printers.values())}
         prompt=f'Напечатать выбранные этикетки: {len(items)} шт.?\nПо одному экземпляру каждой заявки.\n\n'+'\n'.join(f'{name}: {count}' for name,count in sorted(by_printer.items()))
+        if separate_delivery:
+            from orders_model import delivery_service
+            services={delivery_service(item) for item in items}
+            if {'cdek','yandex'}<=services:
+                prompt+='\n\nСначала СДЭК → одна пустая этикетка-разделитель → Яндекс. Пустая этикетка не входит в число заявок.'
         if any(v['confirmed'] for v in items): prompt+='\n\nСреди выбранных есть уже отправленные этикетки: будет дополнительный экземпляр.'
         if context: prompt=context+'\n\n'+prompt
         if skipped: prompt+=f'\n\nБез готовой этикетки: {skipped}. Эти заявки останутся в счётчике и не будут напечатаны.'
@@ -631,7 +636,7 @@ class App:
         def work():
             try:
                 from print_actions import manual_batch
-                result=manual_batch(self.worker,items,printers,submitted)
+                result=manual_batch(self.worker,items,printers,submitted,separate_delivery=separate_delivery)
                 def completed():
                     text=f"Отправлено этикеток: {len(result['submitted'])}."
                     if result['failed']: text+=' Партия остановлена из-за ошибки. Проверьте статус и очередь; автоматического повтора нет.'
