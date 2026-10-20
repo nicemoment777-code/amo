@@ -39,7 +39,7 @@ from orders_model import MOSCOW, read_json, order_groups, parse_period, merge_ca
 from orders_view import OrdersBoard, DatePicker, BG, INK, MUTED
 from printer_routing import load_routes, normalize_routes, choose_printer, PrinterRoutingError
 from printer_panel import PrinterPanel
-from article_buttons import ArticleButtons
+from rounded_controls import RoundedNotebook, RoundedArticleCards
 from order_diagnostics import error_reasons
 from auto_print import auto_print_enabled, set_auto_print
 
@@ -158,22 +158,22 @@ class App:
         article_heading=ttk.Frame(frame); article_heading.pack(fill='x',pady=(10,0))
         ttk.Label(article_heading,text='Карточки по артикулу · не напечатано').pack(side='left')
         ttk.Button(article_heading,text='Обновить артикулы',command=self.refresh_articles).pack(side='right')
-        self.article_filters=ArticleButtons(frame,with_actions=True,wrap=True)
+        self.article_filters=RoundedArticleCards(frame)
         self.article_filters.pack(fill='x',pady=(4,0))
         self.printer_panel=None
         summary=ttk.Frame(frame); summary.pack(fill='x',pady=(16,0))
         self.counts=tk.StringVar(value='Загружаем заказы…')
         ttk.Label(summary,textvariable=self.counts,font=('Segoe UI',11,'bold')).pack(side='left')
         ttk.Label(summary,text='✓ Отправлено     ! Нет подтверждения',foreground=MUTED).pack(side='right')
-        self.tabs=ttk.Notebook(root); self.tabs.pack(fill='both',expand=True,padx=28)
+        self.tabs=RoundedNotebook(root); self.tabs.pack(fill='both',expand=True,padx=28)
         self.boards=[]
         for label in ['Все заявки','✓ Напечатанные','! Ошибки / не напечатаны']:
             page=ttk.Frame(self.tabs); self.tabs.add(page,text=label)
             board=OrdersBoard(page,self.reprint,self.toggle_card,self.show_error); board.pack(fill='both',expand=True)
             self.boards.append(board)
         self.board=self.boards[0]
-        self.tabs.bind('<<NotebookTabChanged>>',self.tab_changed)
-        footer=ttk.Frame(root,padding=(28,10)); footer.pack(fill='x')
+        self.tabs.bind('<<NotebookTabChanged>>',self.tab_changed,add='+')
+        footer=ttk.Frame(root,padding=(28,10)); footer.pack(side='bottom',fill='x',before=frame)
         self.status=tk.StringVar(value='Выберите принтер в настройках. Проверка заявок каждые 5 минут.')
         ttk.Label(footer,textvariable=self.status,foreground=MUTED).pack(side='left')
         ttk.Button(footer,text='Обновить',command=lambda:self.reload()).pack(side='right')
@@ -584,8 +584,10 @@ def self_test():
     app.article_filters.buttons['CHECK_0'].invoke()
     assert len(app.board.hitboxes)==3
     root.update_idletasks()
-    assert not app.article_filters.left.winfo_ismapped() and not app.article_filters.right.winfo_ismapped()
-    assert all(cell.winfo_x()+cell.winfo_width()<=app.article_filters.canvas.winfo_width() for cell in app.article_filters.cells.values())
+    assert all(box[2]<=app.article_filters.canvas.winfo_width()+1 for box in app.article_filters.boxes)
+    assert len(app.article_filters.print_boxes)==3
+    assert app.tabs.boxes[2][1]<app.tabs.boxes[0][1]
+    assert app.article_filters.printer_colors['CHECK_0']=='#dc2844'
     app.card_filter={'NOT_SELECTED'}; app.render(); assert not app.board.hitboxes
     app.reset_article_filter(); assert len(app.board.hitboxes)==8
     app.toggle_selection(); app.select_all_visible()
@@ -631,6 +633,11 @@ def self_test():
         assert sum(len(g['items']) for g in app.boards[2].groups)==7
         assert len(app.board.error_boxes)==7
         assert len(app.article_pending['CHECK_0'])==2
+    from rounded_controls import RoundedArticleCards
+    icon_probe=RoundedArticleCards(root)
+    icon_probe.set_choices([('DONE','DONE · 0',False,True,('#ffffff',INK),lambda:None)])
+    assert icon_probe.printer_colors['DONE']=='#959eaa'
+    icon_probe.destroy()
     app.render()
     assert len(app.article_pending['CHECK_0'])==3
     with patch.object(app,'print_items') as batch:
