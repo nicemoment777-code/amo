@@ -176,9 +176,7 @@ class App:
         self.article_filters.pack(fill='x',pady=(4,0))
         self.printer_panel=None
         summary=ttk.Frame(frame); summary.pack(fill='x',pady=(16,0))
-        self.counts=tk.StringVar(value='Загружаем заказы…')
         ttk.Label(summary,text='✓ Отправлено     ! Нет подтверждения',foreground=MUTED).pack(side='left',anchor='n')
-        ttk.Label(summary,textvariable=self.counts,font=('Segoe UI',11,'bold'),justify='left').pack(side='right')
         self.tabs=RoundedNotebook(root); self.tabs.pack(fill='both',expand=True,padx=28)
         self.boards=[]
         for label in ['Все заявки','✓ Напечатанные','! Ошибки / не напечатаны']:
@@ -334,11 +332,6 @@ class App:
         self.visible_cards=cards
         self.selected_ids.intersection_update(str(v['id']) for v in cards if v['canPrint'])
         self.batch_button.configure(text=f'Печать выбранных ({len(self.selected_ids)})',state='normal' if self.selected_ids and not self.busy else 'disabled')
-        if self.all_time.get():
-            date_label='с 01.10.2026 по '+datetime.now(MOSCOW).strftime('%d.%m.%Y')
-        else:
-            date_label=self.day_from.get() if self.day_from.get()==self.day_to.get() else self.day_from.get()+' — '+self.day_to.get()
-        self.counts.set(f'Дата: {date_label}\nВсего заявок: {totals[0]}\nНапечатанных заявок всего: {totals[1]}')
         self.refresh_article_buttons()
         if self.printer_panel: self.printer_panel.refresh_articles()
         for index,board in enumerate(self.boards):

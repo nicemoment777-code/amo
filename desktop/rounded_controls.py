@@ -71,8 +71,9 @@ class RoundedNotebook(ttk.Notebook):
             text=super().tab(tab,'text'); selected=index==active
             width=font.measure(text)+(52 if selected else 36)
             y=3 if selected else 18; height=60-y
-            rounded(self.header,x,y,width,height,13,fill='#199653' if selected else '#dce0e6',outline='')
-            self.header.create_text(x+width/2,y+height/2,text=text,font=('Segoe UI',13 if selected else 11,'bold'),fill='white' if selected else '#5e6878')
+            active_color,inactive_color,inactive_ink=[('#1764c0','#b9d2ef','#244d7b'),('#d93445','#d3e4da','#4b6e5b'),('#d93445','#e5ced1','#87505a')][min(index,2)]
+            rounded(self.header,x,y,width,height,13,fill=active_color if selected else inactive_color,outline='')
+            self.header.create_text(x+width/2,y+height/2,text=text,font=('Segoe UI',13 if selected else 11,'bold'),fill='white' if selected else inactive_ink)
             self.boxes.append((x,y,x+width,60,index)); x+=width+8
 
     def click(self,event):
