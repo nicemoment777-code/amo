@@ -5,12 +5,30 @@ import tempfile
 import unittest
 
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'ops'))
-from orders_model import order_groups, parse_period, sku_color, print_status, order_title, print_tab_groups, group_by_day
+from orders_model import order_groups, parse_period, sku_color, print_status, order_title, print_tab_groups, group_by_day, pending_by_article
+from order_diagnostics import error_reasons
 from print_actions import manual_print, manual_batch
 from printer_routing import normalize_routes, choose_printer, load_routes, PrinterRoutingError
 from printer_panel import routes_from_rows, available_articles, EMPTY_PRINTER
 
 class BoardTests(unittest.TestCase):
+    def test_article_counts_drop_for_every_sku_after_success_and_keep_missing_labels(self):
+        items=[{'id':1,'createdAt':1,'composition':'(A); (B)','hasLabel':True},
+               {'id':2,'createdAt':2,'composition':'(A)','hasLabel':False}]
+        pending=pending_by_article(order_groups(items,0,10,{}))
+        self.assertEqual({sku:len(v) for sku,v in pending.items()},{'A':2,'B':1})
+        pending=pending_by_article(order_groups(items,0,10,{'printed':{'1':{'status':'submitted'}}}))
+        self.assertEqual({sku:len(v) for sku,v in pending.items()},{'A':1})
+    def test_error_popup_explains_missing_fields_routing_and_uncertain_without_inventing_failure(self):
+        missing={'id':1,'composition':'','hasLabel':False,'deliveryService':'yandex'}
+        reasons=' '.join(error_reasons(missing,{}, {'enabled':False,'routes':[]},'P'))
+        self.assertIn('артикула',reasons); self.assertIn('Яндекса',reasons)
+        ready={'id':2,'composition':'(A); (B)','hasLabel':True}
+        config={'enabled':True,'routes':[{'printer':'P1','skus':['A']},{'printer':'P2','skus':['B']}]}
+        self.assertIn('разным принтерам',' '.join(error_reasons(ready,{},config,'P')))
+        state={'uncertain':{'2':{}},'printed':{}}
+        self.assertIn('Автоматического повтора не будет',' '.join(error_reasons(ready,state,{'enabled':False},'P')))
+        self.assertIn('Ошибка не зафиксирована',error_reasons(ready,{}, {'enabled':False},'P')[0])
     def test_days_use_moscow_midnight_and_preserve_status_colors_and_unique_cards(self):
         import copy
         start,end=parse_period('20.10.2026','00:00','20.10.2026','23:59')

@@ -13,6 +13,7 @@ from urllib.error import HTTPError
 from contextlib import contextmanager
 from print_order import group_key, grouped_print_order
 from printer_routing import load_routes, choose_printer
+from auto_print import auto_print_enabled
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = Path(os.environ.get('SNOWBRICK_DATA_DIR', str(ROOT / 'data' / 'printing')))
@@ -86,6 +87,10 @@ def agent_lock():
 
 def run_once():
     state_path = DATA / 'state.json'
+    if not auto_print_enabled(DATA):
+        summary={'at':datetime.now(timezone.utc).isoformat(),'submitted':0,'paused':True,'errors':[],'order':[]}
+        print(json.dumps(summary,ensure_ascii=True))
+        return summary
     if not state_path.exists():
         now = int(time.time())
         atomic_json(state_path, {'activatedAt': now, 'scanFrom': now, 'pending': {}, 'printed': {}, 'uncertain': {}})
@@ -101,6 +106,7 @@ def run_once():
     count = 0; waiting = 0; errors = []; prepared = {}; ready_items = []
     routing=load_routes(DATA)
     for key in list(state['pending']):
+        if not auto_print_enabled(DATA): break
         try:
             item = json.loads(request('item/' + key))
             if not item['composition'] or not item['hasLabel']:
@@ -114,6 +120,7 @@ def run_once():
             errors.append({'id':key,'type':type(error).__name__})
     ordered = grouped_print_order(ready_items)
     for item in ordered:
+        if not auto_print_enabled(DATA): break
         key = str(item['id'])
         image, details, printer = prepared[key]
         try:
@@ -140,6 +147,7 @@ def run_once():
     print(json.dumps(summary, ensure_ascii=True))
     if errors or state['uncertain']:
         sys.exit(2)
+    return summary
 
 def prepare_batch(count):
     if count != 5:

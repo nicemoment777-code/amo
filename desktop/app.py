@@ -35,11 +35,13 @@ runtime = Path(os.environ['USERPROFILE'])/'.cache/codex-runtimes/codex-primary-r
 os.environ.setdefault('SNOWBRICK_POPPLER', str(BASE/'poppler'/'pdftoppm.exe' if getattr(sys,'frozen',False) else runtime/'native/poppler/Library/bin/pdftoppm.exe'))
 os.environ.setdefault('SNOWBRICK_PRINT_SCRIPT', str(BASE/'ops'/'print-image.ps1'))
 sys.path.insert(0, str(BASE/'ops'))
-from orders_model import MOSCOW, read_json, order_groups, parse_period, merge_catalog, receipt_statuses, sku_set, order_title, sku_color, print_tab_groups, group_by_day
+from orders_model import MOSCOW, read_json, order_groups, parse_period, merge_catalog, receipt_statuses, sku_set, order_title, sku_color, print_tab_groups, group_by_day, pending_by_article
 from orders_view import OrdersBoard, DatePicker, BG, INK, MUTED
 from printer_routing import load_routes, normalize_routes, choose_printer, PrinterRoutingError
 from printer_panel import PrinterPanel
 from article_buttons import ArticleButtons
+from order_diagnostics import error_reasons
+from auto_print import auto_print_enabled, set_auto_print
 
 class Blob(ctypes.Structure):
     _fields_ = [('size', wintypes.DWORD), ('data', ctypes.POINTER(ctypes.c_byte))]
@@ -93,13 +95,14 @@ class App:
         self.actions = queue.Queue(); self.operation_lock = threading.Lock(); self.settings_window = None
         self.config = json.loads(CONFIG.read_text(encoding='utf-8')) if CONFIG.exists() else {}
         self.worker = load_worker()
+        self.auto_print=tk.BooleanVar(value=auto_print_enabled(self.worker.DATA))
         self.printer=tk.StringVar(value=self.config.get('printer','4BARCODE 3B-T361U')); self.printer_names=[]
         routing_error=None
         try: self.routes=load_routes(self.worker.DATA)
         except PrinterRoutingError as e:
             self.routes={'enabled':True,'routes':[]}; routing_error=str(e)
         self.card_filter=None; self.carrier=tk.StringVar(value='Все доставки')
-        self.selection_mode=False; self.selected_ids=set(); self.visible_cards=[]
+        self.selection_mode=False; self.selected_ids=set(); self.visible_cards=[]; self.article_pending={}
         self.article_catalog=set(read_json(self.worker.DATA/'article-catalog.json',[]))
         self.catalog=read_json(self.worker.DATA/'order-catalog.json',[])
         self.worker.POPPLER = Path(os.environ['SNOWBRICK_POPPLER'])
@@ -118,6 +121,7 @@ class App:
         title=ttk.Frame(frame); title.pack(fill='x')
         ttk.Label(title,text='Заказы',font=('Segoe UI',30,'bold')).pack(side='left')
         ttk.Button(title,text='Настройки',command=self.settings).pack(side='right')
+        ttk.Checkbutton(title,text='Автоматическая печать',variable=self.auto_print,command=self.toggle_auto_print).pack(side='right',padx=16)
         ttk.Label(title,text='СНЕГОСТРОЙ',foreground=MUTED,font=('Segoe UI',11,'bold')).pack(side='right',padx=24)
         ttk.Label(frame,text='Все заявки amoCRM  /  По дням поступления · МСК',foreground=MUTED).pack(anchor='w',pady=(0,14))
         connection_row=ttk.Frame(frame); connection_row.pack(fill='x',pady=(0,10))
@@ -152,9 +156,9 @@ class App:
         ttk.Button(filters,text='Сегодня',command=self.today).pack(side='left',padx=6)
         ttk.Button(filters,text='Последние 2 часа',command=self.last_two_hours).pack(side='left')
         article_heading=ttk.Frame(frame); article_heading.pack(fill='x',pady=(10,0))
-        ttk.Label(article_heading,text='Карточки по артикулу').pack(side='left')
+        ttk.Label(article_heading,text='Карточки по артикулу · не напечатано').pack(side='left')
         ttk.Button(article_heading,text='Обновить артикулы',command=self.refresh_articles).pack(side='right')
-        self.article_filters=ArticleButtons(frame,rows=3)
+        self.article_filters=ArticleButtons(frame,rows=3,with_actions=True)
         self.article_filters.pack(fill='x',pady=(4,0))
         self.printer_panel=None
         summary=ttk.Frame(frame); summary.pack(fill='x',pady=(16,0))
@@ -165,7 +169,7 @@ class App:
         self.boards=[]
         for label in ['Все заявки','✓ Напечатанные','! Ошибки / не напечатаны']:
             page=ttk.Frame(self.tabs); self.tabs.add(page,text=label)
-            board=OrdersBoard(page,self.reprint,self.toggle_card); board.pack(fill='both',expand=True)
+            board=OrdersBoard(page,self.reprint,self.toggle_card,self.show_error); board.pack(fill='both',expand=True)
             self.boards.append(board)
         self.board=self.boards[0]
         self.tabs.bind('<<NotebookTabChanged>>',self.tab_changed)
@@ -245,9 +249,11 @@ class App:
         choices=[((), 'Все артикулы', self.card_filter is None, True, ('#ffffff',INK), self.reset_article_filter)]
         unknown=any(not sku_set(item) for item in self.catalog)
         for sku in sorted(values)+([None] if unknown or self.card_filter and None in self.card_filter else []):
-            choices.append((sku,sku or 'Без артикула',self.card_filter is not None and sku in self.card_filter,
+            label=(sku or 'Без артикула')+' · '+str(len(self.article_pending.get(sku,[])))
+            choices.append((sku,label,self.card_filter is not None and sku in self.card_filter,
                             True,sku_color((sku,)) if sku else sku_color(()),lambda s=sku:self.toggle_article_filter(s)))
         self.article_filters.set_choices(choices)
+        self.article_filters.set_actions({sku:(bool(self.article_pending.get(sku)) and not self.busy,lambda s=sku:self.print_article(s)) for sku in values})
     def tab_changed(self,_=None):
         self.board=self.boards[self.tabs.index('current')]
         self.render(True)
@@ -276,7 +282,9 @@ class App:
         except ValueError as e: return self.note(str(e))
         state=read_json(self.worker.DATA/'state.json',{})
         carrier={'СДЭК':'cdek','Яндекс':'yandex','Не указана':'unknown'}.get(self.carrier.get())
-        all_groups=group_by_day(order_groups(self.catalog,start,end,state,receipt_statuses(self.worker.DATA),self.card_filter,carrier=carrier))
+        receipts=receipt_statuses(self.worker.DATA)
+        self.article_pending=pending_by_article(order_groups(self.catalog,start,end,state,receipts,carrier=carrier))
+        all_groups=group_by_day(order_groups(self.catalog,start,end,state,receipts,self.card_filter,carrier=carrier))
         grouped_tabs=[all_groups,print_tab_groups(all_groups,True),print_tab_groups(all_groups,False)]
         totals=[sum(len(g['items']) for g in groups) for groups in grouped_tabs]
         self.tabs.tab(0,text=f'Все заявки · {totals[0]}')
@@ -378,7 +386,7 @@ class App:
                 self.printer_names=names
                 if self.printer_panel: self.printer_panel.set_printers(names)
                 if self.settings_window and self.settings_window.winfo_exists(): self.printers.configure(values=names)
-                if self.config.get('enabled') and '--panel-only' not in sys.argv: self.start()
+                if self.auto_print.get(): self.start()
             self.ui(loaded)
         except Exception: self.ui(lambda:self.note('Не удалось получить список принтеров. Проверьте драйвер Windows.'))
     def pair(self):
@@ -402,24 +410,38 @@ class App:
         self.background(work)
     def start(self):
         if self.running: return
-        if self.thread and self.thread.is_alive(): return self.note('Дождитесь завершения предыдущей проверки.')
-        if self.printer.get() not in self.printer_names: return self.note('Выберите установленный принтер в настройках.')
-        self.running=True; self.stop_event.clear(); self.save(); self.note('Автоматическая печать включена.')
+        if self.thread and self.thread.is_alive():
+            self.auto_print.set(auto_print_enabled(self.worker.DATA)); return self.note('Дождитесь завершения предыдущей проверки.')
+        if self.printer.get() not in self.printer_names:
+            self.stop(); return self.note('Выберите установленный принтер в настройках.')
+        try: set_auto_print(self.worker.DATA,True)
+        except OSError:
+            self.auto_print.set(auto_print_enabled(self.worker.DATA)); return self.note('Не удалось сохранить включение автоматической печати.')
+        self.running=True; self.auto_print.set(True); self.stop_event.clear(); self.save(); self.note('Автоматическая печать включена. Проверка новых заявок каждые 5 минут.')
+        if '--panel-only' in sys.argv: return
         def loop():
             while not self.stop_event.is_set():
                 self.pass_once()
                 if self.stop_event.wait(300): break
         self.thread=threading.Thread(target=loop,daemon=True); self.thread.start()
     def stop(self):
-        self.running=False; self.stop_event.set(); self.save(); self.note('Остановлено. Уже отправленные задания остаются в очереди Windows.')
+        try: set_auto_print(self.worker.DATA,False)
+        except OSError:
+            self.auto_print.set(auto_print_enabled(self.worker.DATA)); return self.note('Не удалось сохранить отключение автоматической печати. Повторите действие.')
+        self.running=False; self.auto_print.set(False); self.stop_event.set(); self.save(); self.note('Автоматическая печать выключена. Уже отправленные задания остаются в очереди Windows.')
+    def toggle_auto_print(self):
+        if self.auto_print.get(): self.start()
+        else: self.stop()
     def pass_once(self):
         if not self.operation_lock.acquire(False): return
         self.busy=True
         try:
             self.worker.PRINTER=self.config.get('printer','')
-            with contextlib.redirect_stdout(io.StringIO()), self.worker.agent_lock(): self.worker.run_once()
-            result=json.loads((self.worker.DATA/'last-run.json').read_text(encoding='utf-8'))
-            self.ui(lambda:self.note(f"Проверено. Отправлено: {result['submitted']}; ожидают данных: {result['waiting']}."))
+            with contextlib.redirect_stdout(io.StringIO()), self.worker.agent_lock(): result=self.worker.run_once()
+            if result.get('paused'):
+                self.ui(lambda:self.note('Автоматическая печать выключена.'))
+            else:
+                self.ui(lambda:self.note(f"Проверено. Отправлено: {result['submitted']}; ожидают данных: {result['waiting']}."))
         except SystemExit:
             self.ui(lambda:self.note('Есть ошибка или неопределённое задание. Проверьте историю; повторная печать заблокирована.'))
         except Exception:
@@ -448,13 +470,35 @@ class App:
                 self.busy=False; self.operation_lock.release()
                 self.ui(lambda:(self.board.set_enabled(True),self.render()))
         self.background(work)
+    def show_error(self,item):
+        try:
+            state=read_json(self.worker.DATA/'state.json',{})
+            last_run=read_json(self.worker.DATA/'last-run.json',{})
+            routing=load_routes(self.worker.DATA)
+            reasons=error_reasons(item,state,routing,self.printer.get(),last_run,
+                                  receipt_statuses(self.worker.DATA),self.printer_names or None,
+                                  self.connection.get().startswith('Нет соединения'))
+        except (OSError,ValueError,TypeError,AttributeError,KeyError):
+            reasons=['Не удалось прочитать локальные сведения о печати или назначения принтеров. Откройте настройки и проверьте сохранённые назначения.']
+        text='По данным последнего обновления карточки:\n\n'+'\n\n'.join('• '+reason for reason in reasons)
+        messagebox.showinfo('Причина / состояние — '+order_title(item),text,parent=self.root)
     def manual_print(self,item_id,expected_printer=None):
         from print_actions import manual_print
         manual_print(self.worker,item_id,expected_printer)
     def print_selected(self):
+        items=[v for v in self.visible_cards if str(v['id']) in self.selected_ids]
+        self.print_items(items)
+    def print_article(self,sku):
+        if self.busy: return self.note('Дождитесь завершения текущего действия.')
+        self.render()
+        items=self.article_pending.get(sku,[])
+        ready=[item for item in items if item['canPrint']]
+        if not ready:
+            return messagebox.showinfo('Печать артикула','Готовых этикеток нет. Проверьте кнопку «Причина» на красных карточках.',parent=self.root)
+        self.print_items(ready,f'Артикул: {sku}',len(items)-len(ready))
+    def print_items(self,items,context='',skipped=0):
         if self.busy: return self.note('Дождитесь завершения текущего действия.')
         if self.printer_panel and self.printer_panel.dirty and not self.printer_panel.save(): return
-        items=[v for v in self.visible_cards if str(v['id']) in self.selected_ids]
         if not items: return
         self.worker.PRINTER=self.printer.get()
         try:
@@ -465,6 +509,11 @@ class App:
         by_printer={name:sum(v==name for v in printers.values()) for name in set(printers.values())}
         prompt=f'Напечатать выбранные этикетки: {len(items)} шт.?\nПо одному экземпляру каждой заявки.\n\n'+'\n'.join(f'{name}: {count}' for name,count in sorted(by_printer.items()))
         if any(v['confirmed'] for v in items): prompt+='\n\nСреди выбранных есть уже отправленные этикетки: будет дополнительный экземпляр.'
+        if context: prompt=context+'\n\n'+prompt
+        if skipped: prompt+=f'\n\nБез готовой этикетки: {skipped}. Эти заявки останутся в счётчике и не будут напечатаны.'
+        state=read_json(self.worker.DATA/'state.json',{})
+        if any(str(v['id']) in state.get('uncertain',{}) or state.get('printed',{}).get(str(v['id']),{}).get('status')=='reserved-on-server' for v in items):
+            prompt+='\n\nЕсть заявки с неопределённой или зарезервированной печатью. Сначала проверьте физические отпечатки и очереди других устройств: возможен дополнительный экземпляр.'
         if not messagebox.askyesno('Печать выбранных этикеток',prompt,parent=self.root): return
         if not self.operation_lock.acquire(False): return
         self.busy=True; self.board.set_enabled(False); self.render()
@@ -501,6 +550,9 @@ class App:
         if self.busy: return messagebox.showinfo(TITLE,'Дождитесь завершения текущего задания.')
         if self.printer_panel and self.printer_panel.dirty and not self.printer_panel.save(): return messagebox.showinfo(TITLE,'Дождитесь сохранения выбранных принтеров и артикулов.')
         if self.running and not messagebox.askyesno(TITLE,'Закрыть приложение и остановить проверку до следующего запуска?'): return
+        if self.running:
+            self.stop()
+            if self.running: return
         self.stop_event.set(); self.root.destroy()
 
 def self_test():
@@ -532,7 +584,7 @@ def self_test():
     app.article_filters.buttons['CHECK_0'].invoke()
     assert len(app.board.hitboxes)==3
     root.update_idletasks()
-    assert len({b.winfo_parent() for b in app.article_filters.buttons.values()})==3
+    assert len(app.article_filters.content.winfo_children())==3
     app.card_filter={'NOT_SELECTED'}; app.render(); assert not app.board.hitboxes
     app.reset_article_filter(); assert len(app.board.hitboxes)==8
     app.toggle_selection(); app.select_all_visible()
@@ -565,6 +617,30 @@ def self_test():
     assert app.connection.get().startswith('Есть соединение')
     assert not (app.worker.DATA/'state.json').exists()
     app.worker.request=original_request
+    from unittest.mock import patch
+    assert len(app.board.error_boxes)==8
+    with patch.object(messagebox,'showinfo') as popup:
+        item={'id':90000100,'createdAt':timestamp,'composition':'','hasLabel':False}
+        app.show_error(item)
+        assert 'артикула' in popup.call_args.args[1] and 'PDF' in popup.call_args.args[1]
+    original_read=read_json
+    with patch.object(sys.modules[__name__],'read_json',side_effect=lambda path,default: {'printed':{'90000000':{'status':'submitted'}}} if Path(path).name=='state.json' else original_read(path,default)):
+        app.render()
+        assert sum(len(g['items']) for g in app.boards[1].groups)==1
+        assert sum(len(g['items']) for g in app.boards[2].groups)==7
+        assert len(app.board.error_boxes)==7
+        assert len(app.article_pending['CHECK_0'])==2
+    app.render()
+    assert len(app.article_pending['CHECK_0'])==3
+    with patch.object(app,'print_items') as batch:
+        app.article_filters.action_buttons['CHECK_0'].invoke()
+        assert len(batch.call_args.args[0])==3
+    app.printer_names=['Self-test printer']; app.printer.set('Self-test printer')
+    with patch.object(threading,'Thread'):
+        app.auto_print.set(True); app.toggle_auto_print()
+        assert auto_print_enabled(app.worker.DATA) and app.auto_print.get()
+        app.auto_print.set(False); app.toggle_auto_print()
+        assert not auto_print_enabled(app.worker.DATA) and not app.auto_print.get()
     saved=[]
     probe=PrinterPanel(root,{'enabled':False,'routes':[]},lambda:['CHECK_SKU'],lambda cfg,auto:saved.append(cfg) or True,lambda _:None)
     probe.set_printers(['Self-test printer'])
@@ -582,7 +658,7 @@ def self_test():
     assert app.printers.winfo_exists() and app.log.winfo_exists()
     root.destroy()
     out=Path(sys.argv[sys.argv.index('--self-test')+1])
-    out.write_text(json.dumps({'ok':True,'dpapi':True,'pdf':True,'barcode':True,'printerHelper':True,'windowControls':True,'printerRows':4,'printersInSettings':True,'articleButtonRows':3,'articleButtons':True,'continuousGrid':True,'printTabs':True,'allOrders':True,'dayGroups':True,'connectionIndicator':True,'articleFilter':True,'printerPersistence':True,'multiSelect':True}),encoding='utf-8')
+    out.write_text(json.dumps({'ok':True,'dpapi':True,'pdf':True,'barcode':True,'printerHelper':True,'windowControls':True,'printerRows':4,'printersInSettings':True,'articleButtonRows':3,'articleButtons':True,'continuousGrid':True,'printTabs':True,'allOrders':True,'dayGroups':True,'connectionIndicator':True,'errorDetails':True,'autoPrintSwitch':True,'articleCounters':True,'articleBatch':True,'movesToPrinted':True,'articleFilter':True,'printerPersistence':True,'multiSelect':True}),encoding='utf-8')
 
 if __name__=='__main__':
     if '--self-test' in sys.argv: self_test()

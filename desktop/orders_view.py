@@ -44,10 +44,11 @@ class DatePicker:
         self.variable.set(f'{day:02}.{self.month:02}.{self.year}'); self.window.destroy()
 
 class OrdersBoard(ttk.Frame):
-    def __init__(self, parent, on_print, on_select=None):
+    def __init__(self, parent, on_print, on_select=None, on_error=None):
         super().__init__(parent)
         self.on_print = on_print; self.groups = []; self.hitboxes = []; self.enabled = True
         self.on_select=on_select; self.selection_mode=False; self.selected=set(); self.selection_boxes=[]
+        self.on_error=on_error; self.error_boxes=[]
         self.canvas = tk.Canvas(self,bg=BG,highlightthickness=0,bd=0)
         self.scroll = ttk.Scrollbar(self,orient='vertical',command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.scroll.set)
@@ -68,7 +69,7 @@ class OrdersBoard(ttk.Frame):
     def set_selection(self, mode, selected):
         self.selection_mode=mode; self.selected=set(selected); self.draw()
     def draw(self):
-        c=self.canvas; c.delete('all'); self.hitboxes=[]; self.selection_boxes=[]
+        c=self.canvas; c.delete('all'); self.hitboxes=[]; self.selection_boxes=[]; self.error_boxes=[]
         width=max(c.winfo_width(),1040); gap=18; left=28
         cardw=(width-2*left-3*gap)/4; cardh=278; y=18
         if not self.groups:
@@ -142,9 +143,16 @@ class OrdersBoard(ttk.Frame):
         status=item['statusText'] if item['canPrint'] else 'Нет этикетки или артикула'
         c.create_text(x+22,y+207,anchor='w',text=status,font=('Segoe UI',9),fill=secondary)
         bx=x+16; by=y+h-52; bw=w-32; bh=36
+        show_reason=not item['confirmed'] and self.on_error is not None
+        if show_reason:
+            bw-=96
+            rx=bx+bw+8; rw=88
+            rounded(c,rx,by,rw,bh,9,fill='#ffffff',outline='')
+            c.create_text(rx+rw/2,by+bh/2,text='Причина',font=('Segoe UI',10,'bold'),fill=INK)
+            self.error_boxes.append((rx,by,rx+rw,by+bh,item))
         active=item['canPrint'] and self.enabled
         rounded(c,bx,by,bw,bh,9,fill='#ffffff' if active else '#e0e6ee',outline='',stipple='' if active else 'gray75')
-        label='Повторная печать' if item['confirmed'] else 'Напечатать этикетку'
+        label='Повторная печать' if item['confirmed'] else 'Напечатать'
         c.create_text(bx+bw/2+8,by+bh/2,text=label if self.enabled else 'Подождите…',font=('Segoe UI',10,'bold'),fill=INK if active else '#78849b')
         px=bx+15; py=by+10
         c.create_rectangle(px+3,py-3,px+15,py+3,outline=INK,width=1.5)
@@ -157,10 +165,15 @@ class OrdersBoard(ttk.Frame):
     def selection_hit(self,event):
         x,y=self.canvas.canvasx(event.x),self.canvas.canvasy(event.y)
         return next((v[4] for v in self.selection_boxes if v[0]<=x<=v[2] and v[1]<=y<=v[3]),None)
+    def error_hit(self,event):
+        x,y=self.canvas.canvasx(event.x),self.canvas.canvasy(event.y)
+        return next((v[4] for v in self.error_boxes if v[0]<=x<=v[2] and v[1]<=y<=v[3]),None)
     def click(self,event):
+        error=self.error_hit(event)
+        if error and self.on_error: return self.on_error(error)
         selection=self.selection_hit(event)
         if selection and self.on_select: return self.on_select(selection)
         item=self.hit(event)
         if item: self.on_print(item)
     def motion(self,event):
-        self.canvas.configure(cursor='hand2' if self.hit(event) or self.selection_hit(event) else '')
+        self.canvas.configure(cursor='hand2' if self.hit(event) or self.selection_hit(event) or self.error_hit(event) else '')

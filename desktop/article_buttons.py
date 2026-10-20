@@ -7,10 +7,11 @@ BG = '#f4f6fb'
 
 
 class ArticleButtons(ttk.Frame):
-    def __init__(self, parent, empty='Артикулов в заявках пока нет', rows=1):
+    def __init__(self, parent, empty='Артикулов в заявках пока нет', rows=1, with_actions=False):
         super().__init__(parent)
         self.empty = empty; self.buttons = {}; self.commands = {}; self.keys = None
         self.rows=max(1,rows)
+        self.with_actions=with_actions; self.action_buttons={}; self.action_commands={}
         self.columnconfigure(1, weight=1)
         self.left = ttk.Button(self, text='‹', width=2, command=lambda: self.move(-1))
         self.left.grid(row=0, column=0, sticky='ns', padx=(0, 4))
@@ -30,9 +31,9 @@ class ArticleButtons(ttk.Frame):
         keys = tuple(value[0] for value in choices)
         if keys != self.keys:
             for child in self.content.winfo_children(): child.destroy()
-            self.buttons = {}; self.keys = keys
+            self.buttons = {}; self.action_buttons={}; self.keys = keys
             font=tkfont.Font(family='Segoe UI',size=10)
-            widths=[font.measure('✓ '+value[1])+28 for value in choices]
+            widths=[font.measure('✓ '+value[1])+28+(128 if self.with_actions and value[0] not in ((),None) else 0) for value in choices]
             row_count=min(self.rows,len(keys)); row=0; used=0
             target=sum(widths)/max(1,row_count)
             lines=[ttk.Frame(self.content) for _ in range(row_count)]
@@ -42,12 +43,19 @@ class ArticleButtons(ttk.Frame):
                 if row<row_count-1 and used and (used+widths[index]>target or remaining==remaining_rows):
                     row+=1; used=0
                 used+=widths[index]
-                button = tk.Button(lines[row], font=('Segoe UI', 10), relief='solid', bd=1,
+                cell=ttk.Frame(lines[row]); cell.pack(side='left',padx=(0,6),pady=1)
+                button = tk.Button(cell, font=('Segoe UI', 10), relief='solid', bd=1,
                                    padx=10, pady=5, takefocus=True, cursor='hand2',
                                    command=lambda k=key: self.commands[k]())
-                button.pack(side='left', padx=(0, 6), pady=1)
+                button.pack(side='left')
                 button.bind('<MouseWheel>', self.wheel)
                 self.buttons[key] = button
+                if self.with_actions and key not in ((),None):
+                    action=tk.Button(cell,text='Напечатать все',font=('Segoe UI',9),relief='solid',bd=1,
+                                     padx=6,pady=6,bg='white',fg='#142346',cursor='hand2',
+                                     command=lambda k=key:self.action_commands[k]())
+                    action.pack(side='left',padx=(3,0)); action.bind('<MouseWheel>',self.wheel)
+                    self.action_buttons[key]=action
             if not keys: ttk.Label(self.content, text=self.empty, foreground='#737d94').pack(pady=8)
         self.commands = {key: command for key, _, _, _, _, command in choices}
         for key, label, selected, enabled, (color, ink), _ in choices:
@@ -57,6 +65,11 @@ class ArticleButtons(ttk.Frame):
                 activeforeground='white' if selected else ink,
                 disabledforeground='#7e8796', state='normal' if enabled else 'disabled')
         self.after_idle(self.layout)
+
+    def set_actions(self, actions):
+        self.action_commands={key:command for key,(_,command) in actions.items()}
+        for key,button in self.action_buttons.items():
+            button.configure(state='normal' if actions.get(key,(False,None))[0] else 'disabled')
 
     def layout(self, _=None):
         if not self.winfo_exists(): return
