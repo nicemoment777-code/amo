@@ -158,7 +158,7 @@ class App:
         article_heading=ttk.Frame(frame); article_heading.pack(fill='x',pady=(10,0))
         ttk.Label(article_heading,text='Карточки по артикулу · не напечатано').pack(side='left')
         ttk.Button(article_heading,text='Обновить артикулы',command=self.refresh_articles).pack(side='right')
-        self.article_filters=ArticleButtons(frame,rows=3,with_actions=True)
+        self.article_filters=ArticleButtons(frame,with_actions=True,wrap=True)
         self.article_filters.pack(fill='x',pady=(4,0))
         self.printer_panel=None
         summary=ttk.Frame(frame); summary.pack(fill='x',pady=(16,0))
@@ -584,7 +584,8 @@ def self_test():
     app.article_filters.buttons['CHECK_0'].invoke()
     assert len(app.board.hitboxes)==3
     root.update_idletasks()
-    assert len(app.article_filters.content.winfo_children())==3
+    assert not app.article_filters.left.winfo_ismapped() and not app.article_filters.right.winfo_ismapped()
+    assert all(cell.winfo_x()+cell.winfo_width()<=app.article_filters.canvas.winfo_width() for cell in app.article_filters.cells.values())
     app.card_filter={'NOT_SELECTED'}; app.render(); assert not app.board.hitboxes
     app.reset_article_filter(); assert len(app.board.hitboxes)==8
     app.toggle_selection(); app.select_all_visible()
@@ -658,7 +659,7 @@ def self_test():
     assert app.printers.winfo_exists() and app.log.winfo_exists()
     root.destroy()
     out=Path(sys.argv[sys.argv.index('--self-test')+1])
-    out.write_text(json.dumps({'ok':True,'dpapi':True,'pdf':True,'barcode':True,'printerHelper':True,'windowControls':True,'printerRows':4,'printersInSettings':True,'articleButtonRows':3,'articleButtons':True,'continuousGrid':True,'printTabs':True,'allOrders':True,'dayGroups':True,'connectionIndicator':True,'errorDetails':True,'autoPrintSwitch':True,'articleCounters':True,'articleBatch':True,'movesToPrinted':True,'articleFilter':True,'printerPersistence':True,'multiSelect':True}),encoding='utf-8')
+    out.write_text(json.dumps({'ok':True,'dpapi':True,'pdf':True,'barcode':True,'printerHelper':True,'windowControls':True,'printerRows':4,'printersInSettings':True,'articleWrap':True,'articleButtons':True,'continuousGrid':True,'printTabs':True,'allOrders':True,'dayGroups':True,'connectionIndicator':True,'errorDetails':True,'autoPrintSwitch':True,'articleCounters':True,'articleBatch':True,'movesToPrinted':True,'articleFilter':True,'printerPersistence':True,'multiSelect':True}),encoding='utf-8')
 
 if __name__=='__main__':
     if '--self-test' in sys.argv: self_test()
