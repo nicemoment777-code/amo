@@ -1,4 +1,4 @@
-"""Панель из четырёх карточек в ряд с разделителями дней поступления."""
+"""Панель из двенадцати карточек в ряд с разделителями дней поступления."""
 import calendar
 from datetime import datetime
 import tkinter as tk
@@ -70,8 +70,8 @@ class OrdersBoard(ttk.Frame):
         self.selection_mode=mode; self.selected=set(selected); self.draw()
     def draw(self):
         c=self.canvas; c.delete('all'); self.hitboxes=[]; self.selection_boxes=[]; self.error_boxes=[]
-        width=max(c.winfo_width(),1040); gap=18; left=28
-        cardw=(width-2*left-3*gap)/4; cardh=278; y=18
+        width=max(c.winfo_width(),1040); gap=6; left=8; columns=12
+        cardw=(width-2*left-(columns-1)*gap)/columns; cardh=154; y=10
         if not self.groups:
             c.create_text(width/2,110,text='Пока нет заказов',font=('Segoe UI',24,'bold'),fill=INK)
             c.create_text(width/2,154,text=self.empty,font=('Segoe UI',11),fill=MUTED)
@@ -82,83 +82,65 @@ class OrdersBoard(ttk.Frame):
         for group in self.groups:
             day=group.get('day')
             if day is not None and day!=current_day:
-                y+=((index+3)//4)*(cardh+gap)
+                y+=((index+columns-1)//columns)*(cardh+gap)
                 index=0; current_day=day
                 c.create_text(left,y+14,anchor='w',text=f'{day} · Заявок: {day_counts[day]}',font=('Segoe UI',16,'bold'),fill=INK,tags='day-heading')
                 c.create_line(left,y+40,width-left,y+40,fill='#dce2ed')
                 y+=58
             color,fg=group['colors']
             for item in group['items']:
-                col=index%4; row=index//4; x=left+col*(cardw+gap); top=y+row*(cardh+gap)
+                col=index%columns; row=index//columns; x=left+col*(cardw+gap); top=y+row*(cardh+gap)
                 self.card(x,top,cardw,cardh,item,color,fg)
                 index+=1
-        y+=((index+3)//4)*(cardh+gap)
+        y+=((index+columns-1)//columns)*(cardh+gap)
         c.configure(scrollregion=(0,0,width,max(y,c.winfo_height())))
     @staticmethod
     def fit(text, length):
         return text if len(text)<=length else text[:length-1]+'…'
     def card(self,x,y,w,h,item,color,fg):
-        c=self.canvas; light=fg!=INK and fg=='#ffffff'
-        rounded(c,x,y+4,w,h,16,fill='#e5e9f2',outline='')
-        rounded(c,x,y,w,h,16,fill=color,outline='')
-        number=order_title(item)
-        number_font=23 if w>=285 else 19
-        while number_font>13 and tkfont.Font(family='Segoe UI',size=number_font,weight='bold').measure(number)>w-98:
-            number_font-=1
-        title_y=y+47 if self.selection_mode else y+40
-        c.create_text(x+22,title_y,anchor='w',text=number,font=('Segoe UI',number_font,'bold'),fill=fg)
+        c=self.canvas
+        rounded(c,x,y+2,w,h,8,fill='#e5e9f2',outline='')
+        rounded(c,x,y,w,h,8,fill=color,outline='')
+        secondary='#d6e5ff' if fg=='#ffffff' else '#45516b'
+        cx=x+w-10; cy=y+10
+        c.create_oval(cx-6,cy-6,cx+6,cy+6,fill='#00a854' if item['confirmed'] else '#ef2345',outline='white')
+        c.create_text(cx,cy,text='✓' if item['confirmed'] else '!',font=('Segoe UI',7,'bold'),fill='white')
+        c.create_text(x+6,y+11,anchor='w',text=str(item['id']),font=('Segoe UI',6),fill=secondary)
+        number=order_title(item); size=9
+        while size>6 and tkfont.Font(family='Segoe UI',size=size,weight='bold').measure(number)>w-12: size-=1
+        c.create_text(x+w/2,y+28,text=number,font=('Segoe UI',size,'bold'),fill=fg)
+        sku='; '.join(item['skus']) or 'Без артикула'
+        maxchars=max(8,int((w-12)/6)); lines=[]; remainder=sku
+        while remainder and len(lines)<2:
+            lines.append(remainder[:maxchars]); remainder=remainder[maxchars:]
+        if remainder: lines[-1]=self.fit(lines[-1],maxchars-1)+'…'
+        c.create_text(x+6,y+43,anchor='nw',text='\n'.join(lines),font=('Segoe UI',8,'bold'),fill=fg)
+        carrier={'cdek':'СДЭК','yandex':'Яндекс','unknown':'Без доставки'}[delivery_service(item)]
+        c.create_text(x+6,y+78,anchor='w',text=carrier,font=('Segoe UI',7,'bold'),fill=secondary)
+        date=datetime.fromtimestamp(item['createdAt'],MOSCOW).strftime('%d.%m %H:%M')
+        c.create_text(x+6,y+92,anchor='w',text=date,font=('Segoe UI',7),fill=fg)
+        status='Отправлено' if item['confirmed'] else ('К печати' if item['canPrint'] else 'Нет PDF/артикула')
+        c.create_text(x+6,y+106,anchor='w',text=status,font=('Segoe UI',6),fill=secondary)
+        by=y+h-30; bh=24; bx=x+6
+        show_reason=not item['confirmed'] and self.on_error is not None
+        bw=w-12-(28 if show_reason else 0)
+        active=item['canPrint'] and self.enabled
+        rounded(c,bx,by,bw,bh,6,fill='#ffffff' if active else '#dce2eb',outline='')
+        px=bx+bw/2-8; py=by+6
+        c.create_rectangle(px+3,py-2,px+13,py+3,outline=INK,width=1)
+        c.create_rectangle(px,py+2,px+16,py+10,outline=INK,width=1)
+        c.create_rectangle(px+3,py+7,px+13,py+14,fill='white',outline=INK,width=1)
+        if active: self.hitboxes.append((bx,by,bx+bw,by+bh,item))
+        if show_reason:
+            rx=x+w-28
+            rounded(c,rx,by,22,bh,6,fill='white',outline='')
+            c.create_text(rx+11,by+12,text='?',font=('Segoe UI',10,'bold'),fill=INK)
+            self.error_boxes.append((rx,by,rx+22,by+bh,item))
         if self.selection_mode:
             checked=str(item['id']) in self.selected
-            c.create_rectangle(x+17,y+10,x+36,y+29,fill=INK if checked else '#ffffff',outline='#ffffff',width=2)
-            if checked: c.create_line(x+21,y+19,x+26,y+24,x+33,y+14,fill='white',width=3)
-            c.create_text(x+44,y+19,anchor='w',text='Выбрано' if checked else 'Выбрать',font=('Segoe UI',9),fill=fg)
-            if self.enabled and item['canPrint']: self.selection_boxes.append((x+12,y+6,x+120,y+32,item))
-        cx=x+w-36; cy=y+34
-        c.create_oval(cx-25,cy-25,cx+25,cy+25,fill='#ffffff',outline='')
-        c.create_oval(cx-21,cy-21,cx+21,cy+21,fill='#00b85b' if item['confirmed'] else '#ff123b',outline='')
-        if item['confirmed']:
-            c.create_line(cx-10,cy,cx-3,cy+8,cx+11,cy-9,fill='white',width=5,capstyle='round',joinstyle='round')
-        else:
-            c.create_line(cx,cy-11,cx,cy+3,fill='white',width=5,capstyle='round')
-            c.create_oval(cx-3,cy+9,cx+3,cy+15,fill='white',outline='')
-        secondary='#d6e5ff' if light else '#45516b'
-        c.create_text(x+22,y+66,anchor='w',text='Заявка amoCRM · '+str(item['id']),font=('Segoe UI',8),fill=secondary)
-        c.create_text(x+22,y+86,anchor='w',text='Артикул',font=('Segoe UI',10),fill=secondary)
-        sku='; '.join(item['skus']) or 'Не указан'
-        # Keep the exact article visible on two lines where possible.
-        maxchars=max(16,int((w-44)/10)); lines=[]; remainder=sku
-        while remainder and len(lines)<2:
-            if len(remainder)<=maxchars: lines.append(remainder); remainder=''
-            else:
-                split=remainder.rfind(' ',0,maxchars)
-                if split<maxchars//2: split=maxchars
-                lines.append(remainder[:split]); remainder=remainder[split:].lstrip()
-        if remainder: lines[-1]=self.fit(lines[-1],maxchars-1)+'…'
-        c.create_text(x+22,y+100,anchor='nw',text='\n'.join(lines),font=('Segoe UI',14,'bold'),fill=fg)
-        carrier={'cdek':'СДЭК','yandex':'Яндекс','unknown':'Доставка не указана'}[delivery_service(item)]
-        c.create_text(x+22,y+146,anchor='w',text=carrier,font=('Segoe UI',9,'bold'),fill=secondary)
-        c.create_text(x+22,y+164,anchor='w',text='Дата поступления · МСК',font=('Segoe UI',9),fill=secondary)
-        date=datetime.fromtimestamp(item['createdAt'],MOSCOW).strftime('%d.%m.%Y · %H:%M')
-        c.create_text(x+22,y+184,anchor='w',text=date,font=('Segoe UI',12,'bold'),fill=fg)
-        status=item['statusText'] if item['canPrint'] else 'Нет этикетки или артикула'
-        c.create_text(x+22,y+207,anchor='w',text=status,font=('Segoe UI',9),fill=secondary)
-        bx=x+16; by=y+h-52; bw=w-32; bh=36
-        show_reason=not item['confirmed'] and self.on_error is not None
-        if show_reason:
-            bw-=96
-            rx=bx+bw+8; rw=88
-            rounded(c,rx,by,rw,bh,9,fill='#ffffff',outline='')
-            c.create_text(rx+rw/2,by+bh/2,text='Причина',font=('Segoe UI',10,'bold'),fill=INK)
-            self.error_boxes.append((rx,by,rx+rw,by+bh,item))
-        active=item['canPrint'] and self.enabled
-        rounded(c,bx,by,bw,bh,9,fill='#ffffff' if active else '#e0e6ee',outline='',stipple='' if active else 'gray75')
-        label='Повторная печать' if item['confirmed'] else 'Напечатать'
-        c.create_text(bx+bw/2+8,by+bh/2,text=label if self.enabled else 'Подождите…',font=('Segoe UI',10,'bold'),fill=INK if active else '#78849b')
-        px=bx+15; py=by+10
-        c.create_rectangle(px+3,py-3,px+15,py+3,outline=INK,width=1.5)
-        c.create_rectangle(px,py+2,px+18,py+12,outline=INK,width=1.5)
-        c.create_rectangle(px+3,py+8,px+15,py+17,fill='#ffffff',outline=INK,width=1.5)
-        if active: self.hitboxes.append((bx,by,bx+bw,by+bh,item))
+            c.create_rectangle(x+5,y+4,x+18,y+17,fill=INK if checked else 'white',outline='white')
+            if checked: c.create_text(x+11,y+10,text='✓',font=('Segoe UI',8,'bold'),fill='white')
+            if self.enabled and item['canPrint']: self.selection_boxes.append((x+3,y+2,x+21,y+19,item))
     def hit(self,event):
         x,y=self.canvas.canvasx(event.x),self.canvas.canvasy(event.y)
         return next((v[4] for v in self.hitboxes if v[0]<=x<=v[2] and v[1]<=y<=v[3]),None)

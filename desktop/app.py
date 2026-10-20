@@ -43,6 +43,7 @@ from rounded_controls import RoundedNotebook, RoundedArticleCards
 from order_diagnostics import error_reasons
 from auto_print import auto_print_enabled, set_auto_print
 from pdf_archive import archive_directory, archive_labels
+from orders_model import VISIBLE_FROM
 
 class Blob(ctypes.Structure):
     _fields_ = [('size', wintypes.DWORD), ('data', ctypes.POINTER(ctypes.c_byte))]
@@ -106,7 +107,7 @@ class App:
         self.card_filter=None; self.carrier=tk.StringVar(value='Все доставки')
         self.selection_mode=False; self.selected_ids=set(); self.visible_cards=[]; self.article_pending={}
         self.article_catalog=set(read_json(self.worker.DATA/'article-catalog.json',[]))
-        self.catalog=read_json(self.worker.DATA/'order-catalog.json',[])
+        self.catalog=[item for item in read_json(self.worker.DATA/'order-catalog.json',[]) if item.get('createdAt',0)>=VISIBLE_FROM]
         self.worker.POPPLER = Path(os.environ['SNOWBRICK_POPPLER'])
         self.token = os.environ.get('PRINT_AGENT_TOKEN') or device_token(); os.environ['PRINT_AGENT_TOKEN'] = self.token
         root.title(TITLE); root.geometry('1440x1000'); root.minsize(1120,850); root.configure(bg=BG)
@@ -125,7 +126,7 @@ class App:
         ttk.Button(title,text='Настройки',command=self.settings).pack(side='right')
         ttk.Checkbutton(title,text='Автоматическая печать',variable=self.auto_print,command=self.toggle_auto_print).pack(side='right',padx=16)
         ttk.Label(title,text='СНЕГОСТРОЙ',foreground=MUTED,font=('Segoe UI',11,'bold')).pack(side='right',padx=24)
-        ttk.Label(frame,text='Все заявки amoCRM  /  По дням поступления · МСК',foreground=MUTED).pack(anchor='w',pady=(0,14))
+        ttk.Label(frame,text='Заявки с 01.10.2026  /  По дням поступления · МСК',foreground=MUTED).pack(anchor='w',pady=(0,14))
         connection_row=ttk.Frame(frame); connection_row.pack(fill='x',pady=(0,10))
         self.connection=tk.StringVar(value='Соединение с amoCRM: ещё не проверено')
         self.connection_label=ttk.Label(connection_row,textvariable=self.connection,foreground=MUTED)
@@ -145,7 +146,7 @@ class App:
             button.pack(side='left',padx=(0,6)); self.delivery_buttons[value]=button
         self.carrier.trace_add('write',lambda *_:self.render(True))
         self.all_time=tk.BooleanVar(value=True)
-        ttk.Checkbutton(self.browse_actions,text='За всё время',variable=self.all_time,command=lambda:self.reload(True)).pack(side='left',padx=16)
+        ttk.Checkbutton(self.browse_actions,text='С 1 октября',variable=self.all_time,command=lambda:self.reload(True)).pack(side='left',padx=16)
         self.batch_controls=ttk.Frame(frame)
         ttk.Button(self.batch_controls,text='Выбрать все в списке',command=self.select_all_visible).pack(side='left')
         ttk.Button(self.batch_controls,text='Снять выделение',command=self.clear_selection).pack(side='left',padx=8)
@@ -259,8 +260,7 @@ class App:
         if carrier:
             start,end=self.period()
             source=[item for item in self.catalog if delivery_service(item)==carrier and start<=item.get('createdAt',0)<=end]
-        values={sku for item in source for sku in sku_set(item)} if carrier else set(self.known_skus())
-        if self.card_filter is not None: values.update(s for s in self.card_filter if s is not None)
+        values={sku for item in source for sku in sku_set(item)}
         choices=[((), 'Все артикулы', self.card_filter is None, True, ('#ffffff',INK), self.reset_article_filter)]
         unknown=any(not sku_set(item) for item in source)
         for sku in sorted(values)+([None] if unknown or self.card_filter and None in self.card_filter else []):
@@ -288,8 +288,9 @@ class App:
             if not automatic: self.note('Сейчас выполняется печать. Дождитесь завершения и сохраните назначение ещё раз.')
         return False
     def period(self):
-        if self.all_time.get(): return 0, 253402289999
-        return parse_period(self.day_from.get(),self.time_from.get(),self.day_to.get(),self.time_to.get())
+        if self.all_time.get(): return VISIBLE_FROM, 253402289999
+        start,end=parse_period(self.day_from.get(),self.time_from.get(),self.day_to.get(),self.time_to.get())
+        return max(start,VISIBLE_FROM),end
     def show_period(self):
         self.all_time.set(False); self.reload(True)
     def render(self,reset=False):
@@ -346,8 +347,8 @@ class App:
         def work():
             try:
                 # Полный каталог только для просмотра; автоочередь и история печати отдельно.
-                incoming=json.loads(self.worker.request('leads?from=0'))['items']
-                catalog=merge_catalog([],incoming)
+                incoming=json.loads(self.worker.request(f'leads?from={VISIBLE_FROM}'))['items']
+                catalog=merge_catalog([],[item for item in incoming if item.get('createdAt',0)>=VISIBLE_FROM])
                 self.worker.atomic_json(self.worker.DATA/'order-catalog.json',catalog)
                 def loaded():
                     self.catalog=catalog; self.render(reset)
@@ -616,11 +617,15 @@ def self_test():
     assert all('Self-test printer' in row['combo']['values'] for row in app.printer_panel.rows)
     timestamp=int(datetime.now(MOSCOW).timestamp())
     samples=[{'id':90000000+n,'createdAt':timestamp,'composition':f'(CHECK_{n//3})','hasLabel':True,'deliveryService':'cdek' if n%2==0 else 'yandex'} for n in range(8)]
+    grid_probe=[{**samples[0],'id':91000000+n} for n in range(13)]
+    app.board.set_groups(order_groups(grid_probe,timestamp,timestamp,{})); root.update_idletasks()
+    assert len({round(value[0]) for value in app.board.hitboxes})==12
+    assert len({round(value[1]) for value in app.board.hitboxes})==2
     app.board.set_groups(order_groups(samples,timestamp,timestamp,{}))
     root.update_idletasks()
     assert len(app.board.hitboxes)==8
-    assert len({round(value[0]) for value in app.board.hitboxes})==4
-    assert len({round(value[1]) for value in app.board.hitboxes[:4]})==1
+    assert len({round(value[0]) for value in app.board.hitboxes})==8
+    assert len({round(value[1]) for value in app.board.hitboxes})==1
     app.catalog=samples; app.tabs.select(2); root.update(); app.render()
     assert len(app.boards[1].groups)==0 and len(app.board.hitboxes)==8
     app.article_filters.buttons['CHECK_0'].invoke()
@@ -658,11 +663,11 @@ def self_test():
     assert app.connection.get().startswith('Нет соединения') and len(app.catalog)==9
     requests=[]
     def online_request(path):
-        requests.append(path); return json.dumps({'items':samples}).encode()
+        requests.append(path); return json.dumps({'items':samples+[{'id':99999999,'createdAt':VISIBLE_FROM-1,'composition':'(SEPTEMBER)','hasLabel':True}]}).encode()
     app.worker.request=online_request
     app.reload()
     while not app.actions.empty(): app.actions.get_nowait()()
-    assert requests==['leads?from=0'] and len(app.catalog)==8
+    assert requests==[f'leads?from={VISIBLE_FROM}'] and len(app.catalog)==8
     assert app.connection.get().startswith('Есть соединение')
     assert not (app.worker.DATA/'state.json').exists()
     app.worker.request=original_request

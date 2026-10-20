@@ -7,6 +7,7 @@ from pathlib import Path
 from print_order import articles
 
 MOSCOW = timezone(timedelta(hours=3))
+VISIBLE_FROM = int(datetime(2026,10,1,tzinfo=MOSCOW).timestamp())
 PALETTE = {
     'red': ('#ff666d', '#131936'), 'pink': ('#f99bcf', '#131936'),
     'green': ('#c1f48b', '#131936'), 'sky': ('#8bd7fa', '#131936'),
