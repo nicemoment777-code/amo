@@ -53,7 +53,7 @@ def build():
         for file in target.rglob('*'):
             if file.is_file(): archive.write(file,file.relative_to(target))
     compiler=Path(os.environ['WINDIR'])/'Microsoft.NET'/'Framework64'/'v4.0.30319'/'csc.exe'
-    subprocess.run([str(compiler),'/nologo','/target:winexe','/platform:x64','/reference:System.Windows.Forms.dll','/reference:System.IO.Compression.dll','/reference:System.IO.Compression.FileSystem.dll','/reference:Microsoft.CSharp.dll','/resource:'+str(payload)+',payload.zip','/out:'+str(ROOT/'dist'/'SnowbrickSetup.exe'),str(ROOT/'desktop'/'Setup.cs')],check=True)
+    subprocess.run([str(compiler),'/nologo','/target:winexe','/platform:x64','/reference:System.Windows.Forms.dll','/reference:System.Security.dll','/reference:System.Web.Extensions.dll','/reference:System.IO.Compression.dll','/reference:System.IO.Compression.FileSystem.dll','/reference:Microsoft.CSharp.dll','/resource:'+str(payload)+',payload.zip','/out:'+str(ROOT/'dist'/'SnowbrickSetup.exe'),str(ROOT/'desktop'/'Setup.cs')],check=True)
     with zipfile.ZipFile(ROOT/'dist'/'snowbrick-amocrm-widget.zip','w',compression=zipfile.ZIP_DEFLATED) as archive:
         for file in (ROOT/'widget').rglob('*'):
             if file.is_file(): archive.write(file,file.relative_to(ROOT/'widget'))
