@@ -96,7 +96,7 @@ class App:
     def __init__(self, root, smoke=False):
         self.root = root; self.running = False; self.busy = False; self.stop_event = threading.Event(); self.thread = None
         self.actions = queue.Queue(); self.operation_lock = threading.Lock(); self.settings_window = None
-        self.smoke=smoke; self.archive_lock=threading.Lock(); self.closing=threading.Event()
+        self.smoke=smoke; self.archive_lock=threading.Lock(); self.closing=threading.Event(); self.login_window=None; self.pairing=False
         self.config = json.loads(CONFIG.read_text(encoding='utf-8')) if CONFIG.exists() else {}
         self.worker = load_worker()
         self.auto_print=tk.BooleanVar(value=auto_print_enabled(self.worker.DATA))
@@ -200,6 +200,8 @@ class App:
         if not smoke:
             self.background(self.refresh_printers); self.reload(); root.after(300000,self.periodic_view)
             if not self.article_catalog: root.after(600,lambda:self.refresh_articles(True))
+            if not self.config.get('paired') and '--panel-only' not in sys.argv:
+                root.after(400,self.show_login)
 
     def note(self,text):
         self.status.set(text); self.settings_log.append(datetime.now(MOSCOW).strftime('%H:%M:%S')+'  '+text)
@@ -365,6 +367,9 @@ class App:
                 self.worker.atomic_json(self.worker.DATA/'order-catalog.json',catalog)
                 def loaded():
                     self.catalog=catalog; self.render(reset)
+                    if not self.config.get('paired'):
+                        self.config['paired']=True; self.save()
+                        if self.login_window and self.login_window.winfo_exists(): self.login_window.destroy()
                     self.connection.set('Есть соединение с amoCRM · Обновлено '+datetime.now(MOSCOW).strftime('%d.%m.%Y %H:%M:%S')+' МСК')
                     self.connection_label.configure(foreground='#008a44')
                     self.note('Заказы обновлены. Зелёная отметка — подтверждение отправки драйверу.')
@@ -492,8 +497,27 @@ class App:
                 if self.auto_print.get(): self.start()
             self.ui(loaded)
         except Exception: self.ui(lambda:self.note('Не удалось получить список принтеров. Проверьте драйвер Windows.'))
+    def show_login(self):
+        if self.config.get('paired'): return
+        if self.login_window and self.login_window.winfo_exists():
+            self.login_window.deiconify(); self.login_window.lift(); return
+        window=tk.Toplevel(self.root); self.login_window=window
+        window.title('Вход — Снегострой'); window.geometry('620x330'); window.resizable(False,False); window.transient(self.root)
+        frame=ttk.Frame(window,padding=28); frame.pack(fill='both',expand=True)
+        ttk.Label(frame,text='Подключение к amoCRM',font=('Segoe UI',20,'bold')).pack(anchor='w',pady=(0,16))
+        ttk.Label(frame,text='Аккаунт: snegostroy.amocrm.ru\n\nНажмите «Войти и подключить компьютер». Откроется сайт snowbrick.ru: войдите под своей учётной записью сайта и подтвердите код этого компьютера.\n\nЭто нужно один раз. Связь с amoCRM обеспечивает сервер; программа запомнит доступ этого компьютера.',wraplength=555).pack(anchor='w')
+        ttk.Button(frame,text='Войти и подключить компьютер',command=self.pair,style='Accent.TButton').pack(anchor='w',pady=(20,0))
+
+    def paired(self):
+        self.config['paired']=True; self.save()
+        if self.login_window and self.login_window.winfo_exists(): self.login_window.destroy()
+        self.note('Компьютер подключён. В настройках выберите принтер. Автопечать включается отдельно.')
+        self.reload()
+
     def pair(self):
         if self.running or self.busy: return self.note('Сначала остановите печать и дождитесь завершения задания.')
+        if self.pairing: return self.note('Подключение уже начато. Подтвердите показанный код на сайте.')
+        self.pairing=True
         self.note('Получаем код подключения…')
         def work():
             try:
@@ -505,11 +529,12 @@ class App:
                     messagebox.showinfo(TITLE,'Войдите на snowbrick.ru. В разделе «Компьютеры печати» введите код '+code[:4]+'-'+code[4:]+'. Разрешите доступ своему компьютеру.')
                 self.ui(show)
                 for _ in range(120):
-                    time.sleep(5)
+                    if self.closing.wait(5): return
                     if pair_request('poll',{'requestId':data['requestId'],'pollSecret':data['pollSecret']})['approved']:
-                        self.ui(lambda:self.note('Компьютер подключён. В настройках выберите принтер и включите автопечать.')); return
+                        self.ui(self.paired); return
                 self.ui(lambda:self.note('Код истёк. Нажмите «Подключить компьютер» ещё раз.'))
             except Exception: self.ui(lambda:self.note('Не удалось подключить компьютер. Проверьте интернет и повторите.'))
+            finally: self.ui(lambda:setattr(self,'pairing',False))
         self.background(work)
     def start(self):
         if self.running: return
@@ -673,6 +698,14 @@ def self_test():
     import zxingcpp, pypdf, reportlab, PIL
     root=tk.Tk(); root.withdraw()
     app=App(root,smoke=True); root.update_idletasks()
+    from unittest.mock import patch
+    app.show_login(); app.login_window.withdraw(); root.update_idletasks()
+    assert app.login_window.winfo_exists()
+    with patch.object(app,'reload') as refresh:
+        app.paired(); refresh.assert_called_once()
+    assert json.loads(CONFIG.read_text(encoding='utf-8'))['paired'] is True
+    assert not app.login_window.winfo_exists() and not auto_print_enabled(app.worker.DATA)
+    app.show_login(); assert not app.login_window.winfo_exists()
     assert app.tabs.index('current')==2
     assert app.board.winfo_exists()
     assert app.printer_panel is None
