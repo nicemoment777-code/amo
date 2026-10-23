@@ -2,7 +2,7 @@
 import io
 from print_order import article_text
 from pathlib import Path
-from pypdf import PdfReader, PdfWriter
+from pypdf import PdfReader, PdfWriter, Transformation
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -29,7 +29,7 @@ def wrap(text, font, size, width):
         lines.append(line)
     return lines
 
-def prepare_label(source, target, composition):
+def prepare_label(source, target, composition, delivery_service=None):
     composition = article_text(composition)
     font = 'LabelArial'
     if font not in pdfmetrics.getRegisteredFontNames():
@@ -44,6 +44,14 @@ def prepare_label(source, target, composition):
     header_width, header_height = 70 * MM, 15 * MM
     width = float(page.mediabox.width)
     height = float(page.mediabox.height) + header_height
+    scale = 1
+    offset_x = offset_y = 0
+    if delivery_service == 'yandex':
+        width, height = 75 * MM, 110 * MM
+        source_width, source_height = float(page.mediabox.width), float(page.mediabox.height)
+        scale = min(width / source_width, (height - header_height) / source_height)
+        offset_x = (width - source_width * scale) / 2
+        offset_y = (height - header_height - source_height * scale) / 2
     width_mm, height_mm = width / MM, height / MM
     if width_mm < 72 or height_mm < 50:
         raise ValueError('Недостаточный размер бумаги')
@@ -66,12 +74,17 @@ def prepare_label(source, target, composition):
         y -= leading
     c.save()
     writer = PdfWriter()
-    # Extend the sheet upward; the original label stays at its original size
-    # and coordinates, below the newly added 15 mm band.
+    # Yandex fits proportionally below the header on a 75 x 110 mm sheet.
+    # Other carriers retain the source dimensions and scale.
     output = writer.add_blank_page(width=width, height=height)
-    output.merge_page(page)
+    if delivery_service == 'yandex':
+        transform = (Transformation().translate(-float(page.mediabox.left), -float(page.mediabox.bottom))
+                     .scale(scale).translate(offset_x, offset_y))
+        output.merge_transformed_page(page, transform)
+    else:
+        output.merge_page(page)
     output.merge_page(PdfReader(overlay).pages[0])
     Path(target).parent.mkdir(parents=True, exist_ok=True)
     with open(target, 'wb') as stream:
         writer.write(stream)
-    return {'widthMm':round(width_mm,4),'heightMm':round(height_mm,4),'headerMm':[70,15],'fontPt':size,'lines':len(lines),'sourceScaleX':1,'sourceScaleY':1,'layout':'top-band'}
+    return {'widthMm':round(width_mm,4),'heightMm':round(height_mm,4),'headerMm':[70,15],'fontPt':size,'lines':len(lines),'sourceScaleX':scale,'sourceScaleY':scale,'layout':'top-band'}

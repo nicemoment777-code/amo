@@ -48,7 +48,7 @@ def prepare(item, for_print=False, variant=''):
     source = DATA / f"label-{item['id']}-original.pdf"
     target = DATA / f"label-{item['id']}-print{variant}.pdf"
     source.write_bytes(load_pdf(archive_directory(),item,request))
-    details = prepare_label(source, target, item['composition'])
+    details = prepare_label(source, target, item['composition'], delivery_service=item.get('deliveryService'))
     prefix = target.with_suffix('')
     subprocess.run([str(POPPLER), '-r', '203', '-singlefile', '-png', str(target), str(prefix)], check=True, capture_output=True)
     # Check that barcodes which are readable in the original remain readable.
