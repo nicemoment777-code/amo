@@ -3,7 +3,7 @@ import json
 import time
 import uuid
 import tempfile
-from print_order import grouped_print_order
+from print_order import grouped_print_order, group_key
 from print_journal import append_entry
 from orders_model import delivery_service
 
@@ -11,11 +11,13 @@ def manual_print(worker, item_id, expected_printer=None):
     with worker.agent_lock():
         return _manual_print_locked(worker,item_id,expected_printer)
 
-def _manual_print_locked(worker, item_id, expected_printer=None, expected_service=None):
+def _manual_print_locked(worker, item_id, expected_printer=None, expected_service=None, expected_skus=None):
     key=str(int(item_id))
     item=json.loads(worker.request('item/'+key))
     if expected_service is not None and delivery_service(item)!=expected_service:
         raise ValueError('Доставка заявки изменилась. Обновите карточки и подтвердите партию ещё раз.')
+    if expected_skus is not None and group_key(item)!=expected_skus:
+        raise ValueError('Артикулы заявки изменились. Обновите карточки и подтвердите партию ещё раз.')
     if not item.get('hasLabel') or not item.get('composition'):
         raise ValueError('Не заполнены этикетка или состав заказа')
     printer=worker.select_printer(item)
@@ -53,14 +55,30 @@ def print_separator(worker,details,printer):
         with Image.new('RGB',(8,8),'white') as blank: blank.save(image)
         worker.print_label(image,details,printer)
 
-def manual_batch(worker, items, printers, on_submitted=None, separate_delivery=False):
+def manual_batch(worker, items, printers, on_submitted=None, separate_delivery=False, separate_articles=False):
     """One explicitly confirmed copy per selected order; stop on any failure."""
     with worker.agent_lock():
-        return _manual_batch_locked(worker,items,printers,on_submitted,separate_delivery)
+        return _manual_batch_locked(worker,items,printers,on_submitted,separate_delivery,separate_articles)
 
-def _manual_batch_locked(worker, items, printers, on_submitted=None, separate_delivery=False):
+def _manual_batch_locked(worker, items, printers, on_submitted=None, separate_delivery=False, separate_articles=False):
     values=list({str(item['id']):item for item in items}.values())
     ordered=grouped_print_order(values)
+    if separate_articles:
+        # Validate the entire confirmed carrier batch before any paper is spent.
+        if len({delivery_service(v) for v in ordered})!=1 or any(delivery_service(v)=='unknown' for v in ordered):
+            raise ValueError('Печатать всё можно только для одной доставки.')
+        state_path=worker.DATA/'state.json'
+        state=json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
+        for item in ordered:
+            key=str(item['id'])
+            if key in state.get('uncertain',{}) or state.get('printed',{}).get(key,{}).get('status')=='reserved-on-server':
+                raise ValueError('В партии есть неподтверждённая печать. Проверьте очередь и карточку заявки.')
+            fresh=json.loads(worker.request('item/'+key))
+            if delivery_service(fresh)!=delivery_service(item) or group_key(fresh)!=group_key(item):
+                raise ValueError('Доставка или артикулы изменились. Обновите и подтвердите партию ещё раз.')
+            if not fresh.get('hasLabel') or worker.select_printer(fresh)!=printers[key]:
+                raise ValueError('Этикетка или назначение принтера изменились. Обновите карточки.')
+            worker.prepare(fresh,for_print=True,variant='-batch-check')
     if separate_delivery:
         # Сохраняем утверждённый порядок групп внутри каждой доставки.
         ordered=sorted(ordered,key=lambda item:{'cdek':0,'yandex':1}.get(delivery_service(item),2))
@@ -69,22 +87,31 @@ def _manual_batch_locked(worker, items, printers, on_submitted=None, separate_de
     path=worker.DATA/f'manual-batch-{uuid.uuid4().hex}.json'
     batch={'at':int(time.time()),'authorizedByOwner':True,'items':[{'id':v['id'],'status':'pending'} for v in ordered]}
     worker.atomic_json(path,batch)
-    submitted=[]; failed=None; previous_service=None; previous_details=None
+    submitted=[]; failed=None; previous_service=None; previous_details=None; previous_item=None
     for item,record in zip(ordered,batch['items']):
         key=str(item['id'])
         record['status']='working'; worker.atomic_json(path,batch)
         try:
             service=delivery_service(item)
+            if separate_articles and previous_item is not None and group_key(previous_item)!=group_key(item):
+                separator={'status':'submitting','printer':printers[str(previous_item['id'])],
+                           'afterId':previous_item['id'],'beforeId':item['id']}
+                batch.setdefault('separators',[]).append(separator); worker.atomic_json(path,batch)
+                print_separator(worker,previous_details,separator['printer'])
+                separator['status']='submitted'; worker.atomic_json(path,batch)
             if separate_delivery and previous_service=='cdek' and service=='yandex':
                 batch['separator']={'status':'submitting','printer':printers[key]}; worker.atomic_json(path,batch)
                 print_separator(worker,previous_details,printers[key])
                 batch['separator']['status']='submitted'; worker.atomic_json(path,batch)
-            details=_manual_print_locked(worker,item['id'],printers[key],service if separate_delivery else None)
+            if separate_articles:
+                details=_manual_print_locked(worker,item['id'],printers[key],service,group_key(item))
+            else:
+                details=_manual_print_locked(worker,item['id'],printers[key],service if separate_delivery else None)
         except Exception as error:
             record.update(status='failed',errorType=type(error).__name__)
             failed=key; worker.atomic_json(path,batch); break
         record['status']='submitted'; submitted.append(key); worker.atomic_json(path,batch)
-        previous_service=service; previous_details=details
+        previous_service=service; previous_details=details; previous_item=item
         if on_submitted: on_submitted(key)
     batch['status']='failed' if failed else 'submitted'; worker.atomic_json(path,batch)
     return {'submitted':submitted,'failed':failed,'remaining':[str(v['id']) for v in batch['items'] if v['status']=='pending']}

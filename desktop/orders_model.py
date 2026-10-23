@@ -122,12 +122,12 @@ def group_by_day(groups):
     return [group for day in sorted(days, reverse=True) for group in days[day].values()]
 
 
-def pending_by_article(groups):
+def pending_by_article(groups, include_printed=False):
     """Одна заявка учитывается по каждому её артикулу, без повторов внутри артикула."""
     result={}
     for group in groups:
         for item in group['items']:
-            if item['confirmed']: continue
+            if item['confirmed'] and not include_printed: continue
             for sku in item['skus'] or (None,):
                 result.setdefault(sku,{})[str(item['id'])]=item
     return {sku:list(items.values()) for sku,items in result.items()}

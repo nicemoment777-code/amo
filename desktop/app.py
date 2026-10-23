@@ -105,7 +105,7 @@ class App:
         try: self.routes=load_routes(self.worker.DATA)
         except PrinterRoutingError as e:
             self.routes={'enabled':True,'routes':[]}; routing_error=str(e)
-        self.card_filter=None; self.carrier=tk.StringVar(value='Все доставки'); self.search_query=''
+        self.card_filter=None; self.carrier=tk.StringVar(value='Яндекс'); self.search_query=''
         self.selection_mode=False; self.selected_ids=set(); self.visible_cards=[]; self.article_pending={}
         self.article_catalog=set(read_json(self.worker.DATA/'article-catalog.json',[]))
         self.catalog=[item for item in read_json(self.worker.DATA/'order-catalog.json',[]) if item.get('createdAt',0)>=VISIBLE_FROM]
@@ -134,6 +134,14 @@ class App:
         self.browse_actions=ttk.Frame(frame); self.browse_actions.pack(fill='x',pady=(0,10))
         self.select_button=ttk.Button(self.browse_actions,text='Выбрать несколько',command=self.toggle_selection)
         self.select_button.pack(side='left')
+        ttk.Button(self.browse_actions,text='Все заявки / история',command=lambda:self.carrier.set('Все доставки')).pack(side='left',padx=8)
+        self.delivery_menu=ttk.Notebook(frame,height=1)
+        self.delivery_menu_index=0
+        self.delivery_menu.pack(fill='x',before=self.browse_actions,pady=(8,8))
+        for label in ['Яндекс доставка','СДЭК доставка']:
+            self.delivery_menu.add(ttk.Frame(self.delivery_menu),text=label)
+        self.delivery_menu.bind('<<NotebookTabChanged>>',self.delivery_changed)
+        self.delivery_menu.bind('<ButtonRelease-1>',lambda _:root.after_idle(lambda:self.carrier.set(['Яндекс','СДЭК'][self.delivery_menu.index('current')])))
         article_heading=ttk.Frame(frame)
         self.delivery_controls=ttk.Frame(article_heading)
         ttk.Label(self.delivery_controls,text='Доставка').pack(side='left',padx=(12,8))
@@ -142,7 +150,7 @@ class App:
             color,ink={'Яндекс':('#ffb52e',INK),'СДЭК':('#199653','white'),'Все доставки':('#dce0e6',INK)}[value]
             button=RoundedButton(self.delivery_controls,text=label,command=lambda v=value:self.carrier.set(v),color=color,foreground=ink)
             button.pack(side='left',padx=(0,6)); self.delivery_buttons[value]=button
-        self.carrier.trace_add('write',lambda *_:self.render(True))
+        self.carrier.trace_add('write',lambda *_:self.carrier_changed())
         self.all_time=tk.BooleanVar(value=True)
         ttk.Checkbutton(self.browse_actions,text='С 1 октября',variable=self.all_time,command=lambda:self.reload(True)).pack(side='left',padx=16)
         self.batch_controls=ttk.Frame(frame)
@@ -172,8 +180,10 @@ class App:
         RoundedButton(search_row,text='Поиск',command=self.search_orders).pack(side='left',padx=6)
         RoundedButton(search_row,text='Сбросить',command=self.clear_search).pack(side='left')
         article_heading.pack(fill='x',pady=(10,0))
-        self.delivery_controls.pack(side='right')
-        ttk.Label(article_heading,text='Карточки по артикулу · не напечатано').pack(side='left')
+        self.print_all_button=ttk.Button(article_heading,text='Печатать всё',style='Accent.TButton',command=self.print_all_delivery)
+        self.print_all_button.pack(side='right')
+        self.article_title=ttk.Label(article_heading,text='Карточки по артикулу')
+        self.article_title.pack(side='left')
         ttk.Button(article_heading,text='Обновить артикулы',command=self.refresh_articles).pack(side='left',padx=16)
         self.article_filters=RoundedArticleCards(frame)
         self.article_filters.pack(fill='x',pady=(4,0))
@@ -270,6 +280,19 @@ class App:
                             True,sku_color((sku,)) if sku else sku_color(()),lambda s=sku:self.toggle_article_filter(s)))
         self.article_filters.set_choices(choices)
         self.article_filters.set_actions({sku:(bool(self.article_pending.get(sku)) and not self.busy,lambda s=sku:self.print_article(s)) for sku in values})
+    def delivery_changed(self,_=None):
+        index=self.delivery_menu.index('current')
+        if index==self.delivery_menu_index: return
+        self.delivery_menu_index=index
+        value=['Яндекс','СДЭК'][index]
+        if self.carrier.get()!=value: self.carrier.set(value)
+    def carrier_changed(self):
+        value=self.carrier.get()
+        if value in ('Яндекс','СДЭК'):
+            self.delivery_menu_index=0 if value=='Яндекс' else 1
+            self.delivery_menu.select(self.delivery_menu_index)
+        self.card_filter=None; self.selected_ids.clear()
+        self.render(True)
     def tab_changed(self,_=None):
         self.board=self.boards[self.tabs.index('current')]
         self.render(True)
@@ -323,7 +346,10 @@ class App:
             self.delivery_buttons[value].configure(text=f'{label} · {delivery_counts[key]}' if key=='all' else label,selected=value==self.carrier.get())
         receipts=receipt_statuses(self.worker.DATA)
         previous_articles=set(self.article_pending)
-        self.article_pending=pending_by_article(order_groups(catalog,start,end,state,receipts,carrier=carrier))
+        self.delivery_items=[item for group in order_groups(catalog,start,end,state,receipts,carrier=carrier) for item in group['items']]
+        self.article_pending=pending_by_article(order_groups(catalog,start,end,state,receipts,carrier=carrier),include_printed=carrier in ('yandex','cdek'))
+        self.article_title.configure(text='Карточки по артикулу · '+(self.carrier.get()+' доставка' if carrier else 'не напечатано'))
+        self.print_all_button.configure(state='normal' if carrier and self.delivery_items and not self.busy else 'disabled')
         if self.card_filter and self.card_filter.intersection(previous_articles-set(self.article_pending)):
             self.card_filter=self.card_filter.intersection(self.article_pending) or None
         all_groups=group_by_day(order_groups(catalog,start,end,state,receipts,self.card_filter,carrier=carrier))
@@ -624,7 +650,17 @@ class App:
         if not ready:
             return messagebox.showinfo('Печать артикула','Готовых этикеток нет. Проверьте кнопку «Причина» на красных карточках.',parent=self.root)
         self.print_items(ready,f'Артикул: {sku}',len(items)-len(ready),separate_delivery=True)
-    def print_items(self,items,context='',skipped=0,separate_delivery=False):
+    def print_all_delivery(self):
+        if self.busy: return self.note('Дождитесь завершения текущего действия.')
+        self.render()
+        if self.carrier.get() not in ('Яндекс','СДЭК'): return
+        state=read_json(self.worker.DATA/'state.json',{})
+        items=self.delivery_items
+        ready=[v for v in items if v['canPrint'] and str(v['id']) not in state.get('uncertain',{})
+               and state.get('printed',{}).get(str(v['id']),{}).get('status')!='reserved-on-server']
+        if not ready: return self.note('Готовых этикеток нет. Проверьте причины на карточках заявок.')
+        self.print_items(ready,self.carrier.get()+' доставка · все заявки выбранного периода',len(items)-len(ready),separate_articles=True)
+    def print_items(self,items,context='',skipped=0,separate_delivery=False,separate_articles=False):
         if self.busy: return self.note('Дождитесь завершения текущего действия.')
         if self.printer_panel and self.printer_panel.dirty and not self.printer_panel.save(): return
         if not items: return
@@ -641,9 +677,13 @@ class App:
             services={delivery_service(item) for item in items}
             if {'cdek','yandex'}<=services:
                 prompt+='\n\nСначала СДЭК → одна пустая этикетка-разделитель → Яндекс. Пустая этикетка не входит в число заявок.'
+        if separate_articles:
+            from print_order import group_key
+            count=len({group_key(item) for item in items})
+            prompt+=f'\n\nГрупп артикулов: {count}. Между группами — по одной белой этикетке (всего {max(0,count-1)}). Разделитель выходит на принтере завершённой группы. Заявка с несколькими артикулами печатается один раз. Фильтр артикула и вкладка статуса не ограничивают эту партию.'
         if any(v['confirmed'] for v in items): prompt+='\n\nСреди выбранных есть уже отправленные этикетки: будет дополнительный экземпляр.'
         if context: prompt=context+'\n\n'+prompt
-        if skipped: prompt+=f'\n\nБез готовой этикетки: {skipped}. Эти заявки останутся в счётчике и не будут напечатаны.'
+        if skipped: prompt+=f'\n\nБез готовой этикетки или с неопределённой печатью: {skipped}. Эти заявки останутся в счётчике и не будут напечатаны.'
         state=read_json(self.worker.DATA/'state.json',{})
         if any(str(v['id']) in state.get('uncertain',{}) or state.get('printed',{}).get(str(v['id']),{}).get('status')=='reserved-on-server' for v in items):
             prompt+='\n\nЕсть заявки с неопределённой или зарезервированной печатью. Сначала проверьте физические отпечатки и очереди других устройств: возможен дополнительный экземпляр.'
@@ -657,7 +697,7 @@ class App:
         def work():
             try:
                 from print_actions import manual_batch
-                result=manual_batch(self.worker,items,printers,submitted,separate_delivery=separate_delivery)
+                result=manual_batch(self.worker,items,printers,submitted,separate_delivery=separate_delivery,separate_articles=separate_articles)
                 def completed():
                     text=f"Отправлено этикеток: {len(result['submitted'])}."
                     if result['failed']: text+=' Партия остановлена из-за ошибки. Проверьте статус и очередь; автоматического повтора нет.'
@@ -709,6 +749,8 @@ def self_test():
     assert app.tabs.index('current')==2
     assert app.board.winfo_exists()
     assert app.printer_panel is None
+    assert [app.delivery_menu.tab(v,'text') for v in app.delivery_menu.tabs()]==['Яндекс доставка','СДЭК доставка']
+    root.update(); app.carrier.set('Все доставки'); root.update()
     app.settings(); app.settings_window.withdraw(); root.update_idletasks()
     assert app.printer_panel.winfo_toplevel()==app.settings_window
     assert len(app.printer_panel.rows)==4
@@ -739,6 +781,11 @@ def self_test():
     app.card_filter={'NOT_SELECTED'}; app.render(); assert not app.board.hitboxes
     app.reset_article_filter(); assert len(app.board.hitboxes)==8
     app.carrier.set('Яндекс'); assert len(app.board.hitboxes)==4 and len(app.article_pending['CHECK_0'])==1
+    with patch.object(app,'print_items') as batch:
+        app.card_filter={'CHECK_0'}; app.render()
+        app.print_all_delivery()
+        assert len(batch.call_args.args[0])==4 and batch.call_args.kwargs['separate_articles']
+    app.reset_article_filter()
     assert app.delivery_buttons['Яндекс'].cget('text')=='Яндекс'
     app.carrier.set('СДЭК'); assert len(app.board.hitboxes)==4 and len(app.article_pending['CHECK_0'])==2
     app.carrier.set('Все доставки'); assert len(app.board.hitboxes)==8
