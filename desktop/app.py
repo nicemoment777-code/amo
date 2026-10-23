@@ -108,7 +108,7 @@ class App:
         self.card_filter=None; self.carrier=tk.StringVar(value='Яндекс'); self.search_query=''
         self.selection_mode=False; self.selected_ids=set(); self.visible_cards=[]; self.article_pending={}
         self.article_catalog=set(read_json(self.worker.DATA/'article-catalog.json',[]))
-        self.catalog=[item for item in read_json(self.worker.DATA/'order-catalog.json',[]) if item.get('createdAt',0)>=VISIBLE_FROM]
+        self.catalog=read_json(self.worker.DATA/'order-catalog.json',[])
         self.worker.POPPLER = Path(os.environ['SNOWBRICK_POPPLER'])
         self.token = os.environ.get('PRINT_AGENT_TOKEN') or device_token(); os.environ['PRINT_AGENT_TOKEN'] = self.token
         root.title(TITLE); root.geometry('1440x1000'); root.minsize(1120,850); root.configure(bg=BG)
@@ -152,7 +152,16 @@ class App:
             button.pack(side='left',padx=(0,6)); self.delivery_buttons[value]=button
         self.carrier.trace_add('write',lambda *_:self.carrier_changed())
         self.all_time=tk.BooleanVar(value=True)
-        ttk.Checkbutton(self.browse_actions,text='С 1 октября',variable=self.all_time,command=lambda:self.reload(True)).pack(side='left',padx=16)
+        self.history_start=tk.StringVar(value=self.config.get('historyStart','01.10.2026'))
+        try: self.history_start_timestamp()
+        except ValueError: self.history_start.set('01.10.2026')
+        ttk.Label(self.browse_actions,text='Отображать с').pack(side='left',padx=(16,6))
+        self.history_start_entry=ttk.Entry(self.browse_actions,textvariable=self.history_start,width=11)
+        self.history_start_entry.pack(side='left')
+        self.history_start_entry.bind('<Return>',lambda _:self.apply_history_start())
+        self.history_calendar=ttk.Button(self.browse_actions,text='▦',width=3,command=lambda:DatePicker(root,self.history_start,self.apply_history_start))
+        self.history_calendar.pack(side='left',padx=(3,6))
+        ttk.Button(self.browse_actions,text='Применить',command=self.apply_history_start).pack(side='left')
         self.batch_controls=ttk.Frame(frame)
         ttk.Button(self.batch_controls,text='Выбрать все в списке',command=self.select_all_visible).pack(side='left')
         ttk.Button(self.batch_controls,text='Снять выделение',command=self.clear_selection).pack(side='left',padx=8)
@@ -194,7 +203,7 @@ class App:
         self.boards=[]
         for label in ['Все заявки','✓ Напечатанные','! Ошибки / не напечатаны']:
             page=ttk.Frame(self.tabs); self.tabs.add(page,text=label)
-            board=OrdersBoard(page,self.reprint,self.toggle_card,self.show_error); board.pack(fill='both',expand=True)
+            board=OrdersBoard(page,self.reprint,self.toggle_card,self.show_error,self.copy_article); board.pack(fill='both',expand=True)
             self.boards.append(board)
         self.tabs.select(2); self.board=self.boards[2]
         self.tabs.bind('<<NotebookTabChanged>>',self.tab_changed,add='+')
@@ -312,9 +321,17 @@ class App:
             if not automatic: self.note('Сейчас выполняется печать. Дождитесь завершения и сохраните назначение ещё раз.')
         return False
     def period(self):
-        if self.all_time.get(): return VISIBLE_FROM, 253402289999
+        if self.all_time.get(): return self.history_start_timestamp(), 253402289999
         start,end=parse_period(self.day_from.get(),self.time_from.get(),self.day_to.get(),self.time_to.get())
-        return max(start,VISIBLE_FROM),end
+        return start,end
+    def history_start_timestamp(self):
+        return parse_period(self.history_start.get(),'00:00',self.history_start.get(),'23:59')[0]
+    def apply_history_start(self):
+        try: self.history_start_timestamp()
+        except ValueError as error: return self.note(str(error))
+        self.config['historyStart']=self.history_start.get(); self.save()
+        self.all_time.set(True); self.card_filter=None; self.selected_ids.clear()
+        self.render(True); self.reload(True)
     def show_period(self):
         self.all_time.set(False); self.reload(True)
     def search_catalog(self):
@@ -379,7 +396,9 @@ class App:
         self.day_from.set(start.strftime('%d.%m.%Y')); self.day_to.set(end.strftime('%d.%m.%Y'))
         self.time_from.set(start.strftime('%H:%M')); self.time_to.set(end.strftime('%H:%M')); self.reload(True)
     def reload(self,reset=False):
-        try: start,end=self.period()
+        try:
+            start,end=self.period()
+            fetch_start=min(start,self.history_start_timestamp())
         except ValueError as e: return self.note(str(e))
         if not self.operation_lock.acquire(False): return self.note('Дождитесь завершения текущего действия.')
         self.busy=True; self.board.set_enabled(False); self.note('Получаем заказы из amoCRM…')
@@ -388,8 +407,8 @@ class App:
         def work():
             try:
                 # Полный каталог только для просмотра; автоочередь и история печати отдельно.
-                incoming=json.loads(self.worker.request(f'leads?from={VISIBLE_FROM}'))['items']
-                catalog=merge_catalog([],[item for item in incoming if item.get('createdAt',0)>=VISIBLE_FROM])
+                incoming=json.loads(self.worker.request(f'leads?from={fetch_start}'))['items']
+                catalog=merge_catalog([],[item for item in incoming if item.get('createdAt',0)>=fetch_start])
                 self.worker.atomic_json(self.worker.DATA/'order-catalog.json',catalog)
                 def loaded():
                     self.catalog=catalog; self.render(reset)
@@ -639,6 +658,11 @@ class App:
     def manual_print(self,item_id,expected_printer=None):
         from print_actions import manual_print
         manual_print(self.worker,item_id,expected_printer)
+    def copy_article(self,item):
+        text='; '.join(sku_set(item))
+        if not text: return
+        self.root.clipboard_clear(); self.root.clipboard_append(text)
+        self.note('Артикул скопирован.' if len(sku_set(item))==1 else 'Артикулы скопированы.')
     def print_selected(self):
         items=[v for v in self.visible_cards if str(v['id']) in self.selected_ids]
         self.print_items(items)
@@ -749,6 +773,12 @@ def self_test():
     assert app.tabs.index('current')==2
     assert app.board.winfo_exists()
     assert app.printer_panel is None
+    with patch.object(app,'reload') as refresh:
+        app.history_start.set('15.09.2026'); app.apply_history_start()
+        assert app.period()[0]==int(datetime(2026,9,15,tzinfo=MOSCOW).timestamp())
+        assert json.loads(CONFIG.read_text(encoding='utf-8'))['historyStart']=='15.09.2026'
+        refresh.assert_called_once_with(True)
+        app.history_start.set('01.10.2026'); app.apply_history_start()
     assert [app.delivery_menu.tab(v,'text') for v in app.delivery_menu.tabs()]==['Яндекс доставка','СДЭК доставка']
     root.update(); app.carrier.set('Все доставки'); root.update()
     app.settings(); app.settings_window.withdraw(); root.update_idletasks()
@@ -767,6 +797,10 @@ def self_test():
     app.board.set_groups(order_groups(samples,timestamp,timestamp,{}))
     root.update_idletasks()
     assert len(app.board.hitboxes)==8
+    assert len(app.board.copy_boxes)==8
+    with patch.object(root,'clipboard_clear') as clear, patch.object(root,'clipboard_append') as copy:
+        app.copy_article({'composition':'Товар (LONG_ARTICLE_NOT_TRUNCATED); Другой (B)'})
+        clear.assert_called_once(); copy.assert_called_once_with('B; LONG_ARTICLE_NOT_TRUNCATED')
     assert len({round(value[0]) for value in app.board.hitboxes})==8
     assert len({round(value[1]) for value in app.board.hitboxes})==1
     app.catalog=samples; app.tabs.select(2); root.update(); app.render()

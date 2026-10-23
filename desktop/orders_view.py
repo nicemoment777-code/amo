@@ -17,8 +17,9 @@ def rounded(canvas, x, y, w, h, radius, **kwargs):
     return canvas.create_polygon(points, smooth=True, splinesteps=24, **kwargs)
 
 class DatePicker:
-    def __init__(self, parent, variable):
+    def __init__(self, parent, variable, on_select=None):
         self.variable = variable
+        self.on_select=on_select
         try: date = datetime.strptime(variable.get(), '%d.%m.%Y')
         except ValueError: date = datetime.now(MOSCOW)
         self.year, self.month = date.year, date.month
@@ -42,13 +43,15 @@ class DatePicker:
         self.year,self.month = month//12,month%12+1; self.draw()
     def select(self, day):
         self.variable.set(f'{day:02}.{self.month:02}.{self.year}'); self.window.destroy()
+        if self.on_select: self.on_select()
 
 class OrdersBoard(ttk.Frame):
-    def __init__(self, parent, on_print, on_select=None, on_error=None):
+    def __init__(self, parent, on_print, on_select=None, on_error=None, on_copy=None):
         super().__init__(parent)
         self.on_print = on_print; self.groups = []; self.hitboxes = []; self.enabled = True
         self.on_select=on_select; self.selection_mode=False; self.selected=set(); self.selection_boxes=[]
         self.on_error=on_error; self.error_boxes=[]
+        self.on_copy=on_copy; self.copy_boxes=[]
         self.canvas = tk.Canvas(self,bg=BG,highlightthickness=0,bd=0)
         self.scroll = ttk.Scrollbar(self,orient='vertical',command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.scroll.set)
@@ -69,7 +72,7 @@ class OrdersBoard(ttk.Frame):
     def set_selection(self, mode, selected):
         self.selection_mode=mode; self.selected=set(selected); self.draw()
     def draw(self):
-        c=self.canvas; c.delete('all'); self.hitboxes=[]; self.selection_boxes=[]; self.error_boxes=[]
+        c=self.canvas; c.delete('all'); self.hitboxes=[]; self.selection_boxes=[]; self.error_boxes=[]; self.copy_boxes=[]
         width=max(c.winfo_width(),1040); gap=6; left=8; columns=12
         cardw=(width-2*left-(columns-1)*gap)/columns; cardh=174; y=10
         if not self.groups:
@@ -112,11 +115,18 @@ class OrdersBoard(ttk.Frame):
         c.create_text(x+w/2,y+30,text=digits[-4:],font=('Segoe UI',18,'bold'),fill=fg,tags='order-suffix')
         c.create_text(x+w/2,y+51,text=number,font=('Segoe UI',size,'bold'),fill=fg)
         sku='; '.join(item['skus']) or 'Без артикула'
-        maxchars=max(8,int((w-12)/6)); lines=[]; remainder=sku
+        copy_width=22 if item['skus'] and self.on_copy else 0
+        maxchars=max(5,int((w-12-copy_width)/6)); lines=[]; remainder=sku
         while remainder and len(lines)<2:
             lines.append(remainder[:maxchars]); remainder=remainder[maxchars:]
         if remainder: lines[-1]=self.fit(lines[-1],maxchars-1)+'…'
         c.create_text(x+6,y+65,anchor='nw',text='\n'.join(lines),font=('Segoe UI',8,'bold'),fill=fg)
+        if copy_width:
+            bx=x+w-23; by=y+64
+            rounded(c,bx,by,19,23,4,fill='white',outline='')
+            c.create_rectangle(bx+5,by+5,bx+12,by+14,outline=INK,width=1)
+            c.create_rectangle(bx+8,by+8,bx+15,by+17,fill='white',outline=INK,width=1)
+            self.copy_boxes.append((bx,by,bx+19,by+23,item))
         carrier={'cdek':'СДЭК','yandex':'Яндекс','unknown':'Без доставки'}[delivery_service(item)]
         c.create_text(x+6,y+100,anchor='w',text=carrier,font=('Segoe UI',7,'bold'),fill=secondary)
         date=datetime.fromtimestamp(item['createdAt'],MOSCOW).strftime('%d.%m %H:%M')
@@ -153,6 +163,8 @@ class OrdersBoard(ttk.Frame):
         x,y=self.canvas.canvasx(event.x),self.canvas.canvasy(event.y)
         return next((v[4] for v in self.error_boxes if v[0]<=x<=v[2] and v[1]<=y<=v[3]),None)
     def click(self,event):
+        copy=self.copy_hit(event)
+        if copy and self.on_copy: return self.on_copy(copy)
         error=self.error_hit(event)
         if error and self.on_error: return self.on_error(error)
         selection=self.selection_hit(event)
@@ -160,4 +172,7 @@ class OrdersBoard(ttk.Frame):
         item=self.hit(event)
         if item: self.on_print(item)
     def motion(self,event):
-        self.canvas.configure(cursor='hand2' if self.hit(event) or self.selection_hit(event) or self.error_hit(event) else '')
+        self.canvas.configure(cursor='hand2' if self.copy_hit(event) or self.hit(event) or self.selection_hit(event) or self.error_hit(event) else '')
+    def copy_hit(self,event):
+        x,y=self.canvas.canvasx(event.x),self.canvas.canvasy(event.y)
+        return next((v[4] for v in self.copy_boxes if v[0]<=x<=v[2] and v[1]<=y<=v[3]),None)
