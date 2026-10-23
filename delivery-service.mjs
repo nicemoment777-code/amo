@@ -3,6 +3,9 @@
 export function deliveryInfo(lead) {
   const fields = lead.custom_fields_values || [];
   const text = field => (field.values || []).map(v => v.value).filter(v => typeof v === 'string').join('\n').trim();
+  const boxberryLabel = fields.find(f => f.field_name?.trim().toLowerCase() === 'этикетка boxberry');
+  // В этом аккаунте заполненная этикетка Boxberry означает Яндекс Доставку.
+  if (text(boxberryLabel || {})) return {service:'yandex', label:text(boxberryLabel)};
   const shipping = fields.filter(f => /^(delivery|служба доставки|способ доставки|тип доставки|доставка)$/i.test(f.field_name?.trim() || '')).map(text).join('\n');
   const yandex = /яндекс|yandex/i.test(shipping), cdek = /сдэк|cdek|sdek/i.test(shipping);
   const cdekLabel = fields.find(f => f.field_name?.trim().toLowerCase() === 'этикетка шк сдэк');

@@ -2,6 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {deliveryInfo} from './delivery-service.mjs';
 const lead = fields => ({custom_fields_values:Object.entries(fields).map(([field_name,value])=>({field_name,values:[{value}]}))});
+test('Boxberry sticker identifies Yandex even with stale CDEK delivery fields', () => {
+  for (const DELIVERY of ['', 'Boxberry', 'СДЭК: ПВЗ', 'Яндекс Доставка']) {
+    assert.deepEqual(deliveryInfo(lead({DELIVERY,' Этикетка Boxberry ':'https://files.test/boxberry.pdf','Этикетка ШК СДЭК':'https://files.test/stale.pdf'})),{service:'yandex',label:'https://files.test/boxberry.pdf'});
+  }
+  assert.deepEqual(deliveryInfo(lead({DELIVERY:'СДЭК','Этикетка Boxberry':'','Этикетка ШК СДЭК':'https://files.test/cdek.pdf'})),{service:'cdek',label:'https://files.test/cdek.pdf'});
+});
 test('delivery filters classify CRM fields and never use CDEK label for a Yandex order', () => {
   assert.deepEqual(deliveryInfo(lead({DELIVERY:'СДЭК: ПВЗ','Этикетка ШК СДЭК':'https://files.test/cdek.pdf'})),{service:'cdek',label:'https://files.test/cdek.pdf'});
   assert.deepEqual(deliveryInfo(lead({DELIVERY:'Яндекс Доставка: ПВЗ','Этикетка ШК СДЭК':'https://files.test/stale.pdf'})),{service:'yandex',label:''});
