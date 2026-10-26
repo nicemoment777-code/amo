@@ -74,7 +74,7 @@ export function cityOf(lead){
 export function quantityOf(lead){
   const numeric=field(lead,/^(количество станочков|количество станков|количество снегостроев|кол-во станочков|количество товара|количество)$/i).map(Number).filter(v=>Number.isSafeInteger(v)&&v>0&&v<=10000);
   const products=field(lead,/^PRODUCTS$/i);
-  const text=(products.length?products:field(lead,/^состав заказа$/i)).join('\n');
+  const text=(products.length?products:field(lead,/^состав заказа$/i)).join('\n').replace(/&(?:quot|apos|amp|nbsp|lt|gt);/g,m=>({'&quot;':'"','&apos;':"'",'&amp;':'&','&nbsp;':' ','&lt;':'<','&gt;':'>'}[m]));
   const lines=text.split(/\r?\n|;(?![^()]*\))/).map(v=>v.trim()).filter(Boolean);
   let total=0,unknown=0,machineLines=0;
   for(const line of lines){
@@ -83,7 +83,7 @@ export function quantityOf(lead){
     const m=line.match(/[-—]\s*(\d+)\s*[xх×]\s*\d/i)||line.match(/,\s*шт\.?\s*[-—]\s*(\d+)/i)||line.match(/(?:кол(?:ичество|[.\s-]*во)\s*[:=]?\s*)(\d+)/i)||line.match(/(\d+)\s*(?:шт\.?|штук[аи]?)(?:\s|$|[.,;])/i)||line.match(/\)\s*(?:[-—xх×:]\s*)?(\d+)(?:\s|$|[.,;])/i);
     let multiplier=1;
     if(/комплект|набор/i.test(line)){
-      const n=line.match(/(?:комплект|набор)\s+(?:из\s+)?(\d+)(?:\s*[-–]?\s*х)?\b/i)?.[1]||line.match(/(\d+)(?:\s*[-–]?\s*х)?\s*(?:станочк|снегостро)/i)?.[1];
+      const n=line.match(/(?:комплект|набор)\s+(?:из\s+)?(\d+)(?:\s*[-–]?\s*х)?\b/i)?.[1]||line.match(/(\d+)(?:\s*[-–]?\s*х)?\s*(?:станочк|снегостро)/i)?.[1]||line.match(/\(([2346])[_-]/)?.[1];
       if(n)multiplier=Number(n);else if(/двух/i.test(line))multiplier=2;else if(/триколор/i.test(line))multiplier=3;else {unknown++;continue;}
     }
     if(m&&Number(m[1])>0&&Number(m[1])<=10000)total+=Number(m[1])*multiplier;else unknown++;
@@ -113,7 +113,7 @@ export function summarize(leads,contacts,pipelines){
     const city=cityOf(lead);if(!city){audit.missingCity++;for(const s of field(lead,/^(DELIVERY_ADDRESS|Адрес пункта выдачи)$/i)){
       const shape=String(s).replace(/[\p{L}\p{N}_]+/gu,w=>/^\d+$/.test(w)?'N':'W');audit.unresolvedCityShapes[shape]=(audit.unresolvedCityShapes[shape]||0)+1;
     }continue;}
-    if(quantity.quantity===null){audit.missingQuantity++;audit.quantityPatterns??={};for(const s of field(lead,/^PRODUCTS$/i)){
+    if(quantity.quantity===null){audit.missingQuantity++;audit.bundleSkus??={};for(const s of field(lead,/^PRODUCTS$/i))for(const m of String(s).matchAll(/\(([^(),]+)\)/g))audit.bundleSkus[m[1]]=(audit.bundleSkus[m[1]]||0)+1;audit.quantityPatterns??={};for(const s of field(lead,/^PRODUCTS$/i)){
       const shape=String(s).replace(/[\p{L}\p{N}_]+/gu,w=>/^(комплект|набор|из|двух|станочков|снегостроев|триколор|шт)$/i.test(w)?w:/^\d+$/.test(w)?w:'W');audit.quantityPatterns[shape]=(audit.quantityPatterns[shape]||0)+1;
     }continue;}
     const ref=lead._embedded?.contacts?.find(v=>v.is_main)||lead._embedded?.contacts?.[0];
