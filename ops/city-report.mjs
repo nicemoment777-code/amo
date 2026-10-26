@@ -60,18 +60,30 @@ export function profile(leads,pipelines,deleted){
 }
 export function cityOf(lead){
   const explicit=field(lead,/^(город|город доставки|город получателя|город сдэк|delivery.?city|city)$/i).map(String).map(v=>v.trim()).filter(Boolean);
-  return explicit.length?[...new Set(explicit)].join(' / '):null;
+  if(explicit.length)return [...new Set(explicit)].join(' / ');
+  for(const address of field(lead,/^DELIVERY_ADDRESS$/i)){
+    const s=String(address);
+    const city=s.match(/^RU:\s*(.+?)\s+(?:Пункт\s+выдачи|ПВЗ|Почтомат|Постамат|Адрес)\s*:/i)?.[1]
+      ||s.match(/\((?:RU|Россия|Российская Федерация),\s*([^,()]+),/i)?.[1];
+    if(city&&!/[\d:()]/.test(city)&&city.length<90)return city.trim();
+  }return null;
 }
 export function quantityOf(lead){
   const numeric=field(lead,/^(количество станочков|количество станков|количество снегостроев|кол-во станочков|количество товара|количество)$/i).map(Number).filter(v=>Number.isSafeInteger(v)&&v>0&&v<=10000);
-  const text=field(lead,/^состав заказа$/i).join('\n');
+  const products=field(lead,/^PRODUCTS$/i);
+  const text=(products.length?products:field(lead,/^состав заказа$/i)).join('\n');
   const lines=text.split(/\r?\n|;(?![^()]*\))/).map(v=>v.trim()).filter(Boolean);
   let total=0,unknown=0,machineLines=0;
   for(const line of lines){
-    if(!/снегострой|станоч|станок/i.test(line)||/^(?:чехол|запасн|дополн|лопат|смазк|ремкомплект)/i.test(line))continue;
+    if(!/снегостро[йе]|станоч|станок|триколор/i.test(line)||/^(?:чехол|запасн|дополн|лопат|смазк|ремкомплект)/i.test(line))continue;
     machineLines++;
-    const m=line.match(/(?:кол(?:ичество|[.\s-]*во)\s*[:=]?\s*)(\d+)/i)||line.match(/(\d+)\s*(?:шт\.?|штук[аи]?)(?:\s|$|[.,;])/i)||line.match(/\)\s*(?:[-—xх×:]\s*)?(\d+)(?:\s|$|[.,;])/i);
-    if(m&&Number(m[1])>0&&Number(m[1])<=10000)total+=Number(m[1]);else unknown++;
+    const m=line.match(/[-—]\s*(\d+)\s*[xх×]\s*\d/i)||line.match(/,\s*шт\.?\s*[-—]\s*(\d+)/i)||line.match(/(?:кол(?:ичество|[.\s-]*во)\s*[:=]?\s*)(\d+)/i)||line.match(/(\d+)\s*(?:шт\.?|штук[аи]?)(?:\s|$|[.,;])/i)||line.match(/\)\s*(?:[-—xх×:]\s*)?(\d+)(?:\s|$|[.,;])/i);
+    let multiplier=1;
+    if(/комплект|набор/i.test(line)){
+      const n=line.match(/(\d+)\s*(?:станочк|снегостро)/i)?.[1];
+      if(n)multiplier=Number(n);else if(/двух/i.test(line))multiplier=2;else if(/триколор/i.test(line))multiplier=3;else {unknown++;continue;}
+    }
+    if(m&&Number(m[1])>0&&Number(m[1])<=10000)total+=Number(m[1])*multiplier;else unknown++;
   }
   if(machineLines&&!unknown)return {quantity:total,source:'composition'};
   if(numeric.length===1&&(machineLines||/снегострой|станоч|станок/i.test(lead.name||'')))return {quantity:numeric[0],source:'numeric-field'};
@@ -84,13 +96,13 @@ export function summarize(leads,contacts,pipelines){
   for(const lead of leads){
     const quantity=quantityOf(lead);if(quantity.source==='no-machine'){audit.noMachine++;continue;}
     const stage=stages.get(lead.status_id)||'';
-    const sent=lead.status_id===142||/доставлен|получен|выдан|отправлен|отгружен|успеш/i.test(stage)||field(lead,/^(дата отправки|дата отгрузки|дата доставки|трек.?номер|номер накладной|номер отправления|штрихкод сдэк|cdek.?number)$/i).some(v=>String(v).trim());
+    const sent=lead.status_id===142||/доставлен|получен|выдан|отправлен|отгружен|успеш|Принято в СДЭК|В пункте выдачи/i.test(stage)||field(lead,/^(дата отправки|дата отгрузки|дата доставки)$/i).some(v=>String(v).trim());
     if(!sent){audit.excludedNoSale++;continue;}
     audit.matched++;audit.statusCounts[lead.status_id]=(audit.statusCounts[lead.status_id]||0)+1;
     const city=cityOf(lead);if(!city){audit.missingCity++;continue;}
     if(quantity.quantity===null){audit.missingQuantity++;continue;}
     const ref=lead._embedded?.contacts?.find(v=>v.is_main)||lead._embedded?.contacts?.[0];const contact=contactMap.get(ref?.id);
-    const phones=contact?field(contact,/^телефон$/i).map(v=>String(v).replace(/\D/g,'')).filter(Boolean):[];
+    const phones=contact?field(contact,/^телефон$/i).map(v=>String(v).replace(/\D/g,'').replace(/^8(?=\d{10}$)/,'7')).filter(Boolean):[];
     const emails=contact?field(contact,/^(email|e-mail)$/i).map(v=>String(v).trim().toLowerCase()).filter(Boolean):[];
     let identity=phones[0]||emails[0]||(ref?'contact:'+ref.id:null);
     if(!identity){audit.withoutContact++;identity='order:'+lead.id;}
