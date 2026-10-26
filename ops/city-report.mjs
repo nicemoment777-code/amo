@@ -40,11 +40,13 @@ export function profile(leads,pipelines,deleted){
       shapes.set(shape,(shapes.get(shape)||0)+1);
     }structures[name]=[...shapes].sort((a,b)=>b[1]-a[1]).slice(0,35);
   }
-  const diagnostics={addressHeaders:{},productWords:{},quantityFormats:{},addressCities:{}};
+  const diagnostics={addressHeaders:{},addressPrefixes:{},parenthesisFirst:{},productWords:{},quantityFormats:{},addressCities:{}};
   for(const lead of leads){
     for(const value of field(lead,/^DELIVERY_ADDRESS$/i)){
       const s=String(value);
       const header=s.match(/^([^:]{1,35}):/);if(header)diagnostics.addressHeaders[header[1]]=(diagnostics.addressHeaders[header[1]]||0)+1;
+      const prefix=s.match(/^RU:\s*([^:]{1,100}):/i)?.[1];if(prefix)diagnostics.addressPrefixes[prefix]=(diagnostics.addressPrefixes[prefix]||0)+1;
+      const first=s.match(/\(([^,()]{1,60}),/i)?.[1];if(first&&!/\d|улиц|ул\./i.test(first))diagnostics.parenthesisFirst[first]=(diagnostics.parenthesisFirst[first]||0)+1;
       const city=s.match(/\((?:Россия|Российская Федерация),\s*([^,()]+),/i)?.[1];
       if(city)diagnostics.addressCities[city]=(diagnostics.addressCities[city]||0)+1;
     }
