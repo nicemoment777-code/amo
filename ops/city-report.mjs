@@ -68,7 +68,7 @@ export function cityOf(lead){
     const city=s.match(/^RU:\s*(.+?)\s+(?:Пункт\s+выдачи|ПВЗ|Почтомат|Постамат|Адрес)\s*:/i)?.[1]
       ||s.match(/\([^,()]+,\s*([^,()]+),/i)?.[1]
       ||s.match(/\)\s*\d{5,6},\s*([^,]+)$/i)?.[1];
-    if(city&&!/[\d:()]|улиц|ул\./i.test(city)&&city.length<90)return city.trim();
+    if(city&&!/[:()/]|улиц|ул\./i.test(city)&&city.length<90)return city.trim();
   }return null;
 }
 export function quantityOf(lead){
@@ -83,7 +83,7 @@ export function quantityOf(lead){
     const m=line.match(/[-—]\s*(\d+)\s*[xх×]\s*\d/i)||line.match(/,\s*шт\.?\s*[-—]\s*(\d+)/i)||line.match(/(?:кол(?:ичество|[.\s-]*во)\s*[:=]?\s*)(\d+)/i)||line.match(/(\d+)\s*(?:шт\.?|штук[аи]?)(?:\s|$|[.,;])/i)||line.match(/\)\s*(?:[-—xх×:]\s*)?(\d+)(?:\s|$|[.,;])/i);
     let multiplier=1;
     if(/комплект|набор/i.test(line)){
-      const n=line.match(/(\d+)(?:\s*[-–]?\s*х)?\s*(?:станочк|снегостро)/i)?.[1];
+      const n=line.match(/(?:комплект|набор)\s+(?:из\s+)?(\d+)(?:\s*[-–]?\s*х)?\b/i)?.[1]||line.match(/(\d+)(?:\s*[-–]?\s*х)?\s*(?:станочк|снегостро)/i)?.[1];
       if(n)multiplier=Number(n);else if(/двух/i.test(line))multiplier=2;else if(/триколор/i.test(line))multiplier=3;else {unknown++;continue;}
     }
     if(m&&Number(m[1])>0&&Number(m[1])<=10000)total+=Number(m[1])*multiplier;else unknown++;
@@ -93,7 +93,7 @@ export function quantityOf(lead){
   return {quantity:null,source:machineLines?'unknown-quantity':'no-machine'};
 }
 export function summarize(leads,contacts,pipelines){
-  const contactMap=new Map(contacts.map(v=>[v.id,v]));const stages=new Map(pipelines.flatMap(p=>(p._embedded?.statuses||[]).map(s=>[s.id,s.name])));
+  const stages=new Map(pipelines.flatMap(p=>(p._embedded?.statuses||[]).map(s=>[s.id,s.name])));
   const parent=new Map(),seen=new Map();
   const root=id=>{if(!parent.has(id))parent.set(id,id);if(parent.get(id)!==id)parent.set(id,root(parent.get(id)));return parent.get(id);};
   for(const contact of contacts){
@@ -113,10 +113,10 @@ export function summarize(leads,contacts,pipelines){
     const city=cityOf(lead);if(!city){audit.missingCity++;for(const s of field(lead,/^(DELIVERY_ADDRESS|Адрес пункта выдачи)$/i)){
       const shape=String(s).replace(/[\p{L}\p{N}_]+/gu,w=>/^\d+$/.test(w)?'N':'W');audit.unresolvedCityShapes[shape]=(audit.unresolvedCityShapes[shape]||0)+1;
     }continue;}
-    if(quantity.quantity===null){audit.missingQuantity++;continue;}
-    const ref=lead._embedded?.contacts?.find(v=>v.is_main)||lead._embedded?.contacts?.[0];const contact=contactMap.get(ref?.id);
-    const phones=contact?field(contact,/^телефон$/i).map(v=>String(v).replace(/\D/g,'').replace(/^8(?=\d{10}$)/,'7')).filter(Boolean):[];
-    const emails=contact?field(contact,/^(email|e-mail)$/i).map(v=>String(v).trim().toLowerCase()).filter(Boolean):[];
+    if(quantity.quantity===null){audit.missingQuantity++;audit.quantityPatterns??={};for(const s of field(lead,/^PRODUCTS$/i)){
+      const shape=String(s).replace(/[\p{L}\p{N}_]+/gu,w=>/^(комплект|набор|из|двух|станочков|снегостроев|триколор|шт)$/i.test(w)?w:/^\d+$/.test(w)?w:'W');audit.quantityPatterns[shape]=(audit.quantityPatterns[shape]||0)+1;
+    }continue;}
+    const ref=lead._embedded?.contacts?.find(v=>v.is_main)||lead._embedded?.contacts?.[0];
     let identity=ref?'contact:'+root(ref.id):null;
     if(!identity){audit.withoutContact++;identity='order:'+lead.id;}
     identity=createHash('sha256').update(identity).digest('hex');
