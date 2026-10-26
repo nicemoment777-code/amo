@@ -12,4 +12,6 @@ test('historic product quantities multiply bundle contents, never price or acces
   const lead={custom_fields_values:[custom('PRODUCTS','Комплект из 2 станочков (bundle) - 3x4990 = 14970;\nКрасный снегострой + нож-пила в подарок (single), шт - 2x2990 = 5980'),custom('Состав заказа','Красный снегострой (single), шт - 2')]};
   assert.equal(quantityOf(lead).quantity,8);
   assert.equal(cityOf({custom_fields_values:[custom('DELIVERY_ADDRESS','RU: Нижний Новгород Пункт выдачи: ул. Тестовая, 1 (RU, Нижний Новгород, ул. Тестовая)123456')]}),'Нижний Новгород');
+  assert.equal(quantityOf({custom_fields_values:[custom('PRODUCTS','Комплект синих станочков (2_Blue_Blue) - 2x7300 = 14600')]}).quantity,4);
+  assert.equal(quantityOf({custom_fields_values:[custom('PRODUCTS','Набор &quot;Триколор&quot; (1-Tricolor) - 1x18200 = 18200')]}).quantity,3);
 });
