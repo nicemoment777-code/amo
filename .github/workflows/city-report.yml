@@ -1,0 +1,38 @@
+name: Read-only city report
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [profile, report]
+        default: profile
+permissions:
+  contents: read
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+      - name: Read CRM on owner's server and retrieve aggregate only
+        env:
+          SSHPASS: ${{ secrets.VPS_SSH_PASSWORD }}
+          REPORT_HOST: ${{ secrets.VPS_SSH_HOST }}
+          REPORT_USER: ${{ secrets.VPS_SSH_USER }}
+          KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+          REPORT_MODE: ${{ inputs.mode }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          printf '%s\n' "$KNOWN_HOSTS" > known_hosts
+          opts=(-o StrictHostKeyChecking=yes -o UserKnownHostsFile=known_hosts -o ConnectTimeout=20)
+          sshpass -e scp "${opts[@]}" ops/city-report.mjs "$REPORT_USER@$REPORT_HOST:/root/city-report.mjs"
+          sshpass -e ssh "${opts[@]}" "$REPORT_USER@$REPORT_HOST" "node /root/city-report.mjs $REPORT_MODE"
+          sshpass -e scp "${opts[@]}" "$REPORT_USER@$REPORT_HOST:/root/city-report-result.json" city-report-result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: city-report-aggregate
+          path: city-report-result.json
+          retention-days: 1
