@@ -66,7 +66,8 @@ export function cityOf(lead){
   for(const address of field(lead,/^DELIVERY_ADDRESS$/i)){
     const s=String(address);
     const city=s.match(/^RU:\s*(.+?)\s+(?:Пункт\s+выдачи|ПВЗ|Почтомат|Постамат|Адрес)\s*:/i)?.[1]
-      ||s.match(/\([^,()]+,\s*([^,()]+),/i)?.[1];
+      ||s.match(/\([^,()]+,\s*([^,()]+),/i)?.[1]
+      ||s.match(/\)\s*\d{5,6},\s*([^,]+)$/i)?.[1];
     if(city&&!/[\d:()]|улиц|ул\./i.test(city)&&city.length<90)return city.trim();
   }return null;
 }
@@ -82,7 +83,7 @@ export function quantityOf(lead){
     const m=line.match(/[-—]\s*(\d+)\s*[xх×]\s*\d/i)||line.match(/,\s*шт\.?\s*[-—]\s*(\d+)/i)||line.match(/(?:кол(?:ичество|[.\s-]*во)\s*[:=]?\s*)(\d+)/i)||line.match(/(\d+)\s*(?:шт\.?|штук[аи]?)(?:\s|$|[.,;])/i)||line.match(/\)\s*(?:[-—xх×:]\s*)?(\d+)(?:\s|$|[.,;])/i);
     let multiplier=1;
     if(/комплект|набор/i.test(line)){
-      const n=line.match(/(\d+)\s*(?:станочк|снегостро)/i)?.[1];
+      const n=line.match(/(\d+)(?:\s*[-–]?\s*х)?\s*(?:станочк|снегостро)/i)?.[1];
       if(n)multiplier=Number(n);else if(/двух/i.test(line))multiplier=2;else if(/триколор/i.test(line))multiplier=3;else {unknown++;continue;}
     }
     if(m&&Number(m[1])>0&&Number(m[1])<=10000)total+=Number(m[1])*multiplier;else unknown++;
@@ -100,7 +101,8 @@ export function summarize(leads,contacts,pipelines){
     const keys=[...field(contact,/^телефон$/i).map(v=>'phone:'+String(v).replace(/\D/g,'').replace(/^8(?=\d{10}$)/,'7')),...field(contact,/^(email|e-mail)$/i).map(v=>'email:'+String(v).trim().toLowerCase())];
     for(const key of keys.filter(v=>v.split(':')[1])){if(seen.has(key))parent.set(root(contact.id),root(seen.get(key)));else seen.set(key,contact.id);}
   }
-  const aggregate=new Map();const audit={scanned:leads.length,matched:0,excludedNoSale:0,missingCity:0,missingQuantity:0,noMachine:0,withoutContact:0,quantitySources:{},statusCounts:{}};
+  const orderIds=leads.flatMap(l=>field(l,/^ORDERID$/i).map(String));
+  const aggregate=new Map();const audit={scanned:leads.length,duplicateOrderIds:orderIds.length-new Set(orderIds).size,matched:0,excludedNoSale:0,missingCity:0,missingQuantity:0,noMachine:0,withoutContact:0,quantitySources:{},statusCounts:{},unresolvedCityShapes:{}};
   const privateRows=[];
   for(const lead of leads){
     const quantity=quantityOf(lead);if(quantity.source==='no-machine'){audit.noMachine++;continue;}
@@ -108,7 +110,9 @@ export function summarize(leads,contacts,pipelines){
     const sent=lead.status_id===142||/доставлен|получен|выдан|отправлен|отгружен|успеш|Принято в СДЭК|В пункте выдачи/i.test(stage)||field(lead,/^(дата отправки|дата отгрузки|дата доставки)$/i).some(v=>String(v).trim());
     if(!sent){audit.excludedNoSale++;continue;}
     audit.matched++;audit.statusCounts[lead.status_id]=(audit.statusCounts[lead.status_id]||0)+1;
-    const city=cityOf(lead);if(!city){audit.missingCity++;continue;}
+    const city=cityOf(lead);if(!city){audit.missingCity++;for(const s of field(lead,/^(DELIVERY_ADDRESS|Адрес пункта выдачи)$/i)){
+      const shape=String(s).replace(/[\p{L}\p{N}_]+/gu,w=>/^\d+$/.test(w)?'N':'W');audit.unresolvedCityShapes[shape]=(audit.unresolvedCityShapes[shape]||0)+1;
+    }continue;}
     if(quantity.quantity===null){audit.missingQuantity++;continue;}
     const ref=lead._embedded?.contacts?.find(v=>v.is_main)||lead._embedded?.contacts?.[0];const contact=contactMap.get(ref?.id);
     const phones=contact?field(contact,/^телефон$/i).map(v=>String(v).replace(/\D/g,'').replace(/^8(?=\d{10}$)/,'7')).filter(Boolean):[];
