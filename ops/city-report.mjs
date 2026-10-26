@@ -66,8 +66,8 @@ export function cityOf(lead){
   for(const address of field(lead,/^DELIVERY_ADDRESS$/i)){
     const s=String(address);
     const city=s.match(/^RU:\s*(.+?)\s+(?:Пункт\s+выдачи|ПВЗ|Почтомат|Постамат|Адрес)\s*:/i)?.[1]
-      ||s.match(/\((?:RU|Россия|Российская Федерация),\s*([^,()]+),/i)?.[1];
-    if(city&&!/[\d:()]/.test(city)&&city.length<90)return city.trim();
+      ||s.match(/\([^,()]+,\s*([^,()]+),/i)?.[1];
+    if(city&&!/[\d:()]|улиц|ул\./i.test(city)&&city.length<90)return city.trim();
   }return null;
 }
 export function quantityOf(lead){
@@ -93,6 +93,13 @@ export function quantityOf(lead){
 }
 export function summarize(leads,contacts,pipelines){
   const contactMap=new Map(contacts.map(v=>[v.id,v]));const stages=new Map(pipelines.flatMap(p=>(p._embedded?.statuses||[]).map(s=>[s.id,s.name])));
+  const parent=new Map(),seen=new Map();
+  const root=id=>{if(!parent.has(id))parent.set(id,id);if(parent.get(id)!==id)parent.set(id,root(parent.get(id)));return parent.get(id);};
+  for(const contact of contacts){
+    root(contact.id);
+    const keys=[...field(contact,/^телефон$/i).map(v=>'phone:'+String(v).replace(/\D/g,'').replace(/^8(?=\d{10}$)/,'7')),...field(contact,/^(email|e-mail)$/i).map(v=>'email:'+String(v).trim().toLowerCase())];
+    for(const key of keys.filter(v=>v.split(':')[1])){if(seen.has(key))parent.set(root(contact.id),root(seen.get(key)));else seen.set(key,contact.id);}
+  }
   const aggregate=new Map();const audit={scanned:leads.length,matched:0,excludedNoSale:0,missingCity:0,missingQuantity:0,noMachine:0,withoutContact:0,quantitySources:{},statusCounts:{}};
   const privateRows=[];
   for(const lead of leads){
@@ -106,7 +113,7 @@ export function summarize(leads,contacts,pipelines){
     const ref=lead._embedded?.contacts?.find(v=>v.is_main)||lead._embedded?.contacts?.[0];const contact=contactMap.get(ref?.id);
     const phones=contact?field(contact,/^телефон$/i).map(v=>String(v).replace(/\D/g,'').replace(/^8(?=\d{10}$)/,'7')).filter(Boolean):[];
     const emails=contact?field(contact,/^(email|e-mail)$/i).map(v=>String(v).trim().toLowerCase()).filter(Boolean):[];
-    let identity=phones[0]||emails[0]||(ref?'contact:'+ref.id:null);
+    let identity=ref?'contact:'+root(ref.id):null;
     if(!identity){audit.withoutContact++;identity='order:'+lead.id;}
     identity=createHash('sha256').update(identity).digest('hex');
     const key=city.toLocaleLowerCase('ru').replace(/^г[.\s]+/,'').replace(/ё/g,'е').replace(/\s+/g,' ').trim();
