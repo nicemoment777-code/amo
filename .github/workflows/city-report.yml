@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [profile, report]
+        options: [profile, inspect, report]
         default: profile
 permissions:
   contents: read
@@ -36,3 +36,4 @@ jobs:
           name: city-report-aggregate
           path: city-report-result.json
           retention-days: 1
+

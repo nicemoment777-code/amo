@@ -32,7 +32,15 @@ export function profile(leads,pipelines,deleted){
       const s=String(composition);const shape=[/снегострой/i.test(s)?'snowbrick':'other',/станоч|станок/i.test(s)?'machine':'no-machine-word',/\d+\s*шт/i.test(s)?'qty-sht':/\)\s*[-—xх×:]?\s*\d+/i.test(s)?'qty-after-sku':'no-qty'].join('/');shapes[shape]=(shapes[shape]||0)+1;
     }
   }
-  return {scanned:leads.length,deleted:deleted.length,earliest:Math.min(...leads.map(v=>v.created_at||Infinity)),latest:Math.max(...leads.map(v=>v.created_at||0)),fields:Object.entries(names).sort((a,b)=>b[1]-a[1]),statuses,pipelines:pipelines.map(v=>({id:v.id,name:v.name,archive:v.is_archive,statuses:v._embedded?.statuses?.map(s=>({id:s.id,name:s.name}))})),compositionShapes:shapes};
+  const structures={};
+  for(const name of ['PRODUCTS','DELIVERY_ADDRESS','Состав заказа']){
+    const shapes=new Map();
+    for(const lead of leads)for(const value of field(lead,new RegExp('^'+name+'$','i'))){
+      const shape=String(value).replace(/https?:\/\/\S+/g,'URL').replace(/[\p{L}\p{N}_]+/gu,w=>/^(город|г|область|обл|край|республика|респ|район|улица|ул|дом|д|кв|индекс|адрес|city|address|country|region|zip|postal|quantity|qty|name|price|sku|amount|шт|снегострой|станочек|станок|количество)$/i.test(w)?w:/^\d+$/.test(w)?'N':'W');
+      shapes.set(shape,(shapes.get(shape)||0)+1);
+    }structures[name]=[...shapes].sort((a,b)=>b[1]-a[1]).slice(0,35);
+  }
+  return {scanned:leads.length,deleted:deleted.length,earliest:Math.min(...leads.map(v=>v.created_at||Infinity)),latest:Math.max(...leads.map(v=>v.created_at||0)),fields:Object.entries(names).sort((a,b)=>b[1]-a[1]),statuses,pipelines:pipelines.map(v=>({id:v.id,name:v.name,archive:v.is_archive,statuses:v._embedded?.statuses?.map(s=>({id:s.id,name:s.name}))})),compositionShapes:shapes,structures};
 }
 export function cityOf(lead){
   const explicit=field(lead,/^(город|город доставки|город получателя|город сдэк|delivery.?city|city)$/i).map(String).map(v=>v.trim()).filter(Boolean);
