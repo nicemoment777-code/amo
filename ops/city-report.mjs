@@ -83,8 +83,9 @@ export function quantityOf(lead){
     const m=line.match(/[-—]\s*(\d+)\s*[xх×]\s*\d/i)||line.match(/,\s*шт\.?\s*[-—]\s*(\d+)/i)||line.match(/(?:кол(?:ичество|[.\s-]*во)\s*[:=]?\s*)(\d+)/i)||line.match(/(\d+)\s*(?:шт\.?|штук[аи]?)(?:\s|$|[.,;])/i)||line.match(/\)\s*(?:[-—xх×:]\s*)?(\d+)(?:\s|$|[.,;])/i);
     let multiplier=1;
     if(/комплект|набор/i.test(line)){
-      const n=line.match(/(?:комплект|набор)\s+(?:из\s+)?(\d+)(?:\s*[-–]?\s*х)?\b/i)?.[1]||line.match(/(\d+)(?:\s*[-–]?\s*х)?\s*(?:станочк|снегостро)/i)?.[1]||(!/триколор/i.test(line)&&line.match(/\(([12346])[_-]/)?.[1]);
-      if(n)multiplier=Number(n);else if(/двух/i.test(line))multiplier=2;else if(/триколор/i.test(line))multiplier=3;else {unknown++;continue;}
+      const n=line.match(/(?:комплект|набор)\s+(?:из\s+)?(\d+)(?:\s*[-–]?\s*х)?\b/i)?.[1]||line.match(/(\d+)(?:\s*[-–]?\s*х)?\s*(?:станочк|снегостро)/i)?.[1];
+      const skuCount=line.match(/\(([12346])[_-]/)?.[1];
+      if(n)multiplier=Number(n);else if(/двух/i.test(line))multiplier=2;else if(/триколор/i.test(line))multiplier=3;else if(skuCount)multiplier=Number(skuCount);else {unknown++;continue;}
     }
     if(m&&Number(m[1])>0&&Number(m[1])<=10000)total+=Number(m[1])*multiplier;else unknown++;
   }
@@ -110,7 +111,7 @@ export function summarize(leads,contacts,pipelines){
     const sent=lead.status_id===142||/доставлен|получен|выдан|отправлен|отгружен|успеш|Принято в СДЭК|В пункте выдачи/i.test(stage)||field(lead,/^(дата отправки|дата отгрузки|дата доставки)$/i).some(v=>String(v).trim());
     if(!sent){audit.excludedNoSale++;continue;}
     audit.matched++;audit.statusCounts[lead.status_id]=(audit.statusCounts[lead.status_id]||0)+1;
-    const city=cityOf(lead)||'Город не определён';if(city==='Город не определён'){audit.missingCity++;for(const s of field(lead,/^(DELIVERY_ADDRESS|Адрес пункта выдачи)$/i)){
+    const rawCity=cityOf(lead);const city=/^moscow$/i.test(rawCity||'')?'Москва':rawCity||'Город не определён';if(city==='Город не определён'){audit.missingCity++;for(const s of field(lead,/^(DELIVERY_ADDRESS|Адрес пункта выдачи)$/i)){
       const shape=String(s).replace(/[\p{L}\p{N}_]+/gu,w=>/^\d+$/.test(w)?'N':'W');audit.unresolvedCityShapes[shape]=(audit.unresolvedCityShapes[shape]||0)+1;
     }}
     if(quantity.quantity===null){audit.missingQuantity++;audit.bundleSkus??={};for(const s of field(lead,/^PRODUCTS$/i))for(const m of String(s).matchAll(/\(([^(),]+)\)/g))audit.bundleSkus[m[1]]=(audit.bundleSkus[m[1]]||0)+1;audit.quantityPatterns??={};for(const s of field(lead,/^PRODUCTS$/i)){
