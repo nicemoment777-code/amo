@@ -40,6 +40,22 @@ export function profile(leads,pipelines,deleted){
       shapes.set(shape,(shapes.get(shape)||0)+1);
     }structures[name]=[...shapes].sort((a,b)=>b[1]-a[1]).slice(0,35);
   }
+  const diagnostics={addressHeaders:{},productWords:{},quantityFormats:{},addressCities:{}};
+  for(const lead of leads){
+    for(const value of field(lead,/^DELIVERY_ADDRESS$/i)){
+      const s=String(value);
+      const header=s.match(/^([^:]{1,35}):/);if(header)diagnostics.addressHeaders[header[1]]=(diagnostics.addressHeaders[header[1]]||0)+1;
+      const city=s.match(/\((?:Россия|Российская Федерация),\s*([^,()]+),/i)?.[1];
+      if(city)diagnostics.addressCities[city]=(diagnostics.addressCities[city]||0)+1;
+    }
+    for(const value of field(lead,/^PRODUCTS$/i)){
+      for(const w of String(value).toLowerCase().match(/[а-яё-]{3,}/g)||[])diagnostics.productWords[w]=(diagnostics.productWords[w]||0)+1;
+      for(const line of String(value).split(/\r?\n/)){
+        const format=/[-—]\s*\d+\s*[xх×]\s*\d+/i.test(line)?'quantity-x-price':/,\s*шт\s*[-—]\s*\d+/i.test(line)?'sht-quantity':'other';diagnostics.quantityFormats[format]=(diagnostics.quantityFormats[format]||0)+1;
+      }
+    }
+  }
+  structures.diagnostics=diagnostics;
   return {scanned:leads.length,deleted:deleted.length,earliest:Math.min(...leads.map(v=>v.created_at||Infinity)),latest:Math.max(...leads.map(v=>v.created_at||0)),fields:Object.entries(names).sort((a,b)=>b[1]-a[1]),statuses,pipelines:pipelines.map(v=>({id:v.id,name:v.name,archive:v.is_archive,statuses:v._embedded?.statuses?.map(s=>({id:s.id,name:s.name}))})),compositionShapes:shapes,structures};
 }
 export function cityOf(lead){
