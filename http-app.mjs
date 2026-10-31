@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {webCatalog} from './web-catalog.mjs';
 import {readFile} from 'node:fs/promises';
 import {parseNumbers} from './cdek.mjs';
 import {validWebhookKey, webhookOrder} from './webhook.mjs';
@@ -15,7 +16,8 @@ async function readJson(req, limit) {
   catch { throw new Error('Некорректный JSON'); }
 }
 
-export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '', labelHosts = [], printDevices}) {
+export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '', labelHosts = [], printDevices, browserControl}) {
+  const catalogs=new Map();
   const server = http.createServer(async (req, res) => {
     const json = (status, value) => { res.writeHead(status, {'Content-Type': 'application/json; charset=utf-8'}); res.end(JSON.stringify(value)); };
     const redirect = path => { res.writeHead(302, {Location: path}); res.end(); };
@@ -24,6 +26,19 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
     res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     try {
       const path = new URL(req.url, 'http://localhost').pathname;
+      async function sendLabel(id) {
+          const result = await amocrm.printLabel(id);
+          const url = new URL(result.url);
+          if (url.protocol !== 'https:' || url.port || url.username || url.password || !labelHosts.includes(url.hostname)) return json(400, {error: 'Домен этикетки ещё не разрешён для печати'});
+          const response = await fetch(url, {redirect: 'error', signal: AbortSignal.timeout(30000)});
+          if (!response.ok) return json(502, {error: 'Не удалось получить этикетку'});
+          const reader = response.body.getReader(); const chunks = []; let length = 0;
+          try { while (true) { const {done, value} = await reader.read(); if (done) break; length += value.length; if (length > 10e6) throw new Error('Слишком большой файл этикетки'); chunks.push(value); } }
+          finally { await reader.cancel(); }
+          const content = Buffer.concat(chunks);
+          if (!content.subarray(0, 5).equals(Buffer.from('%PDF-'))) return json(415, {error: 'Этикетка должна быть PDF'});
+          res.writeHead(200, {'Content-Type': 'application/pdf','Content-Disposition':'attachment; filename="label-'+id+'.pdf"'}); return res.end(content);
+      }
       if (path.startsWith('/webhooks/cdek/')) {
         if (req.method !== 'POST') return json(405, {error: 'Требуется POST'});
         if (!validWebhookKey(path.slice('/webhooks/cdek/'.length), webhookSecret)) return json(404, {error: 'Не найдено'});
@@ -46,6 +61,16 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
         const legacy = bearer && /^[a-f0-9]{64}$/.test(printAgentHash) && timingSafeEqual(createHash('sha256').update(bearer).digest(), Buffer.from(printAgentHash, 'hex'));
         const owner = legacy ? 'legacy' : printDevices?.authorize(bearer);
         if (!auth.enabled || !amocrm || !owner) return json(401, {error: 'Нет доступа к печати'});
+        if (browserControl && path.startsWith('/api/print-agent/browser/')) {
+          const client=req.headers['x-print-client'];
+          if(!/^[a-f0-9]{32}$/.test(client||''))return json(409,{error:'Обновите модуль печати Windows'});
+          const browserOwner=owner+':'+client;
+
+          if (req.method==='GET' && path.endsWith('/poll')) return json(200,await browserControl.take(browserOwner));
+          if (req.method==='POST' && path.endsWith('/snapshot')) return json(200,browserControl.publish(browserOwner,await readJson(req,8e6)));
+          if (req.method==='POST' && path.endsWith('/result')) return json(200,await browserControl.finish(browserOwner,await readJson(req,100000)));
+          return json(405,{error:'Недопустимое действие'});
+        }
         if (printDevices && path==='/api/print-agent/history') {
           if (req.method==='GET') return json(200,printDevices.history());
           if (req.method==='POST') return json(200,await printDevices.record((await readJson(req,100000)).entries,owner));
@@ -66,17 +91,7 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
         if (itemId) return json(200, (await amocrm.printLabel(itemId)).item);
         const labelId = path.match(/^\/api\/print-agent\/label\/(\d+)$/)?.[1];
         if (labelId) {
-          const result = await amocrm.printLabel(labelId);
-          const url = new URL(result.url);
-          if (url.protocol !== 'https:' || url.port || url.username || url.password || !labelHosts.includes(url.hostname)) return json(400, {error: 'Домен этикетки ещё не разрешён для печати'});
-          const response = await fetch(url, {redirect: 'error', signal: AbortSignal.timeout(30000)});
-          if (!response.ok) return json(502, {error: 'Не удалось получить этикетку'});
-          const reader = response.body.getReader(); const chunks = []; let length = 0;
-          try { while (true) { const {done, value} = await reader.read(); if (done) break; length += value.length; if (length > 10e6) throw new Error('Слишком большой файл этикетки'); chunks.push(value); } }
-          finally { await reader.cancel(); }
-          const content = Buffer.concat(chunks);
-          if (!content.subarray(0, 5).equals(Buffer.from('%PDF-'))) return json(415, {error: 'Этикетка должна быть PDF'});
-          res.writeHead(200, {'Content-Type': 'application/pdf'}); return res.end(content);
+          return sendLabel(labelId);
         }
         return json(404, {error: 'Не найдено'});
       }
@@ -114,6 +129,38 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
         return json(200,printDevices.history());
       }
       if (req.method === 'GET' && path === '/api/auth/session') return json(200, {enabled: auth.enabled, username: session?.username});
+      if (browserControl && path.startsWith('/api/browser/')) {
+        if (!auth.enabled || !session) return json(403,{error:'Войдите на сайт'});
+        const browserLabel=path.match(/^\/api\/browser\/label\/(\d+)$/)?.[1];
+        if(req.method==='GET'&&browserLabel)return sendLabel(browserLabel);
+        if (req.method==='GET' && path==='/api/browser/history') return json(200,printDevices.history());
+        if (req.method==='GET' && path==='/api/browser/catalog') {
+          const from=Number(new URL(req.url,'http://localhost').searchParams.get('from'));
+          if(!Number.isSafeInteger(from)||from<0||from>253402289999)return json(400,{error:'Некорректная дата'});
+          let cached=catalogs.get(from);
+          if(!cached || Date.now()-cached.at>15000) {
+            if(catalogs.size>=8)catalogs.delete(catalogs.keys().next().value);
+            cached={at:Date.now(),promise:amocrm.printCandidates(from)};catalogs.set(from,cached);
+            cached.promise.catch(()=>catalogs.delete(from));
+          }
+          const data=await cached.promise,history=printDevices.history();
+          return json(200,{items:webCatalog(data.items,history),journal:history.events,at:Date.now()});
+        }
+        if (req.method==='GET' && path==='/api/browser/devices') return json(200,{devices:browserControl.list()});
+        if (req.method==='GET' && path==='/api/browser/snapshot') return json(200,browserControl.snapshot(new URL(req.url,'http://localhost').searchParams.get('device')));
+        if (req.method==='POST' && path==='/api/browser/command') return json(200,await browserControl.enqueue(await readJson(req,100000)));
+        const commandId=path.match(/^\/api\/browser\/command\/([a-f0-9]{40})$/)?.[1];
+        if (req.method==='GET' && commandId) return json(200,browserControl.result(commandId));
+        return json(404,{error:'Не найдено'});
+      }
+      if (req.method==='GET' && ['/', '/printer.js','/printer.css','/printer-model.js'].includes(path)) {
+        const name={'/':'printer.html','/printer.js':'printer.js','/printer.css':'printer.css','/printer-model.js':'printer-model.js'}[path];
+        const contents=await readFile(new URL('./public/'+name,import.meta.url));
+        res.writeHead(200,{'Content-Type':(name.endsWith('.html')?'text/html':name.endsWith('.css')?'text/css':'text/javascript')+'; charset=utf-8'}); return res.end(contents);
+      }
+      if (req.method==='GET' && path==='/cdek') {
+        res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); return res.end(await readFile(new URL('./public/index.html',import.meta.url)));
+      }
       if (amocrm && (path.startsWith('/api/amocrm/') || path === '/integrations/amocrm' || path === '/amocrm.js')) {
         if (!auth.enabled || !session) return json(403, {error: 'Для подключения amoCRM требуется вход на сайт'});
         if (printDevices && req.method === 'GET' && path === '/api/amocrm/devices') return json(200, {devices: printDevices.list()});

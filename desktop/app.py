@@ -23,6 +23,10 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler
 import webbrowser
 import winreg
 
+for option,variable in [('--profile-home','SNOWBRICK_HOME'),('--printing-data','SNOWBRICK_DATA_DIR')]:
+    if option in sys.argv:
+        os.environ[variable]=str(Path(sys.argv[sys.argv.index(option)+1]).resolve())
+
 TITLE = 'Снегострой — печать этикеток'
 ORIGIN = 'https://snowbrick.ru'
 BASE = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent))
@@ -97,6 +101,7 @@ class App:
     def __init__(self, root, smoke=False):
         self.root = root; self.running = False; self.busy = False; self.stop_event = threading.Event(); self.thread = None
         self.actions = queue.Queue(); self.operation_lock = threading.Lock(); self.settings_window = None
+        self.background_agent=not smoke and ('--background-agent' in sys.argv or getattr(sys,'frozen',False))
         self.smoke=smoke; self.archive_lock=threading.Lock(); self.closing=threading.Event(); self.login_window=None; self.pairing=False
         self.config = json.loads(CONFIG.read_text(encoding='utf-8')) if CONFIG.exists() else {}
         self.worker = load_worker()
@@ -219,6 +224,8 @@ class App:
         self.pump(); self.render()
         if routing_error: self.note(routing_error)
         if not smoke:
+            from browser_bridge import BrowserBridge
+            self.browser_bridge=BrowserBridge(self); self.browser_bridge.start()
             self.background(self.refresh_printers); self.reload(); root.after(300000,self.periodic_view)
             if not self.article_catalog: root.after(600,lambda:self.refresh_articles(True))
             if not self.config.get('paired') and '--panel-only' not in sys.argv:
@@ -236,6 +243,9 @@ class App:
             except queue.Empty: break
             try: callback()
             except Exception: self.note('Не удалось прочитать или обновить панель. Проверьте локальный журнал; история не сбрасывалась.')
+        show_request=HOME/'show-window.request'
+        if not self.smoke and show_request.exists():
+            show_request.unlink(missing_ok=True); self.root.deiconify(); self.root.lift()
         self.root.after(70,self.pump)
     def background(self,callback): threading.Thread(target=callback,daemon=True).start()
     def known_skus(self):
@@ -402,6 +412,8 @@ class App:
         try:
             start,end=self.period()
             fetch_start=min(start,self.history_start_timestamp())
+            if getattr(self,'browser_bridge',None) and self.browser_bridge.view_from is not None:
+                fetch_start=min(fetch_start,self.browser_bridge.view_from)
         except ValueError as e: return self.note(str(e))
         if not self.operation_lock.acquire(False): return self.note('Дождитесь завершения текущего действия.')
         self.busy=True; self.board.set_enabled(False); self.note('Получаем заказы из amoCRM…')
@@ -507,6 +519,7 @@ class App:
         ttk.Button(row,text='Включить автопечать',command=self.start).pack(side='left')
         ttk.Button(row,text='Остановить',command=self.stop).pack(side='left',padx=8)
         ttk.Button(row,text='Открыть журнал',command=lambda:os.startfile(str(self.worker.DATA))).pack(side='left')
+        ttk.Button(row,text='Завершить модуль',command=self.exit_agent).pack(side='right')
         ttk.Label(frame,text='СДЭК 1:1 · Яндекс 75 × 110 мм · сверху артикулы и вес в кг.\nПовторная печать — с карточки конкретного заказа.\nЗелёный значок подтверждает передачу драйверу, а не выход бумаги.',foreground=MUTED).pack(anchor='w',pady=18)
         self.log=tk.Text(frame,height=8,wrap='word',font=('Segoe UI',10),bd=0,padx=10,pady=10)
         self.log.pack(fill='both',expand=True); self.log.insert('end','\n'.join(self.settings_log)); self.log.configure(state='disabled')
@@ -599,7 +612,8 @@ class App:
             self.auto_print.set(auto_print_enabled(self.worker.DATA)); return self.note('Дождитесь завершения предыдущей проверки.')
         if self.printer.get() not in self.printer_names:
             self.stop(); return self.note('Выберите установленный принтер в настройках.')
-        try: set_auto_print(self.worker.DATA,True)
+        try:
+            if not auto_print_enabled(self.worker.DATA): set_auto_print(self.worker.DATA,True)
         except OSError:
             self.auto_print.set(auto_print_enabled(self.worker.DATA)); return self.note('Не удалось сохранить включение автоматической печати.')
         self.running=True; self.auto_print.set(True); self.stop_event.clear(); self.save(); self.note('Автоматическая печать включена. Проверка новых заявок каждые 5 минут.')
@@ -749,15 +763,26 @@ class App:
         try:
             with winreg.CreateKey(winreg.HKEY_CURRENT_USER,r'Software\Microsoft\Windows\CurrentVersion\Run') as key:
                 if self.startup.get():
-                    command='"'+sys.executable+'"'
-                    if not getattr(sys,'frozen',False): command+=' "'+str(Path(__file__).resolve())+'"'
+                    if getattr(sys,'frozen',False):
+                        command='"'+sys.executable+'" --background-agent --profile-home "'+str(HOME)+'" --printing-data "'+str(self.worker.DATA)+'"'
+                    else:
+                        shell=Path(os.environ['USERPROFILE'])/'.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe'
+                        command='"'+str(shell)+'" -NoProfile -WindowStyle Hidden -File "'+str(BASE/'ops/open-print-panel.ps1')+'" -BackgroundAgent'
                     winreg.SetValueEx(key,'SnowbrickPrinter',0,winreg.REG_SZ,command)
                 else:
                     try: winreg.DeleteValue(key,'SnowbrickPrinter')
                     except FileNotFoundError: pass
             self.save()
         except OSError: self.note('Не удалось изменить автозапуск Windows.')
+    def exit_agent(self):
+        background=self.background_agent
+        self.background_agent=False
+        try: self.close()
+        finally: self.background_agent=background
     def close(self):
+        if self.background_agent:
+            if self.settings_window and self.settings_window.winfo_exists(): self.settings_window.withdraw()
+            self.root.withdraw(); return
         if self.busy: return messagebox.showinfo(TITLE,'Дождитесь завершения текущего задания.')
         if self.printer_panel and self.printer_panel.dirty and not self.printer_panel.save(): return messagebox.showinfo(TITLE,'Дождитесь сохранения выбранных принтеров и артикулов.')
         if self.running and not messagebox.askyesno(TITLE,'Закрыть приложение и остановить проверку до следующего запуска?'): return
@@ -958,7 +983,9 @@ if __name__=='__main__':
         duplicate=ctypes.get_last_error()==183
         root=tk.Tk()
         if duplicate:
-            root.withdraw(); messagebox.showinfo(TITLE,'Приложение уже запущено. Найдите его окно на панели задач.'); root.destroy()
+            (HOME/'show-window.request').write_text('show',encoding='utf-8'); root.destroy()
         else:
-            try: App(root); root.mainloop()
+            try:
+                if '--background-agent' in sys.argv and '--show-window' not in sys.argv: root.withdraw()
+                App(root); root.mainloop()
             except Exception: root.withdraw(); messagebox.showerror(TITLE,'Не удалось открыть приложение. Проверьте права доступа и переустановите его.'); root.destroy()

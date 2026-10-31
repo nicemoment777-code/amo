@@ -5,6 +5,8 @@ import os
 import sys
 import time
 import subprocess
+import uuid
+import threading
 import msvcrt
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,9 +31,31 @@ class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
 
+_client_lock=threading.Lock()
+_client_id=None
+
+
+def browser_client_id():
+    global _client_id
+    with _client_lock:
+        if _client_id is None:
+            file=DATA/'browser-client-id.txt'
+            try: value=file.read_text(encoding='ascii').strip()
+            except FileNotFoundError:
+                candidate=uuid.uuid4().hex
+                try:
+                    with file.open('x',encoding='ascii') as stream: stream.write(candidate)
+                    value=candidate
+                except FileExistsError: value=file.read_text(encoding='ascii').strip()
+            if len(value)!=32 or any(v not in '0123456789abcdef' for v in value):
+                raise RuntimeError('Некорректный идентификатор модуля. Проверьте локальные настройки.')
+            _client_id=value
+        return _client_id
+
+
 def request(path, body=None):
     token = os.environ['PRINT_AGENT_TOKEN']
-    req = Request(ORIGIN + '/api/print-agent/' + path, data=json.dumps(body).encode() if body is not None else None, headers={'Authorization': 'Bearer ' + token, 'Content-Type':'application/json'})
+    req = Request(ORIGIN + '/api/print-agent/' + path, data=json.dumps(body).encode() if body is not None else None, headers={'Authorization': 'Bearer ' + token, 'Content-Type':'application/json','X-Print-Client':browser_client_id()})
     with build_opener(NoRedirect()).open(req, timeout=60) as response:
         content = response.read(10_000_001)
         if len(content) > 10_000_000:

@@ -38,7 +38,7 @@ class Setup {
     string connection = personal ? "Подключение к вашему аккаунту уже включено. Вход и код не нужны. После установки выберите принтеры в настройках." : "Ключи подключаются отдельно после установки.";
     if (!check && MessageBox.Show("Установить личное приложение печати Снегострой?\n\n"+connection+"\nПрограмма работает только при включённом компьютере.", "Снегострой — установка", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
     try {
-      if (!check && Process.GetProcessesByName("SnowbrickPrinter").Length > 0) throw new Exception("Закройте Снегострой перед обновлением.");
+      if (!check && Process.GetProcessesByName("SnowbrickPrinter").Length > 0) throw new Exception("Завершите модуль: Настройки → Общие настройки → Завершить модуль. Затем повторите обновление.");
       Directory.CreateDirectory(dest);
       using (Stream payload = Assembly.GetExecutingAssembly().GetManifestResourceStream("payload.zip"))
       using (ZipArchive archive = new ZipArchive(payload, ZipArchiveMode.Read)) {
@@ -64,6 +64,16 @@ class Setup {
       desktopShortcut.TargetPath = exe; desktopShortcut.WorkingDirectory = dest; desktopShortcut.Description = "Заказы amoCRM и печать этикеток"; desktopShortcut.Save();
       File.WriteAllText(Path.Combine(dest,"Удаление.txt"), "Закройте приложение. Снимите автозапуск в приложении. Удалите эту папку, ярлык Снегострой с рабочего стола и из меню Пуск. История и ключ хранятся отдельно в %LOCALAPPDATA%\\SnowbrickPrinter. Доступ устройства можно отозвать на snowbrick.ru.");
       if (testInstall) return;
+      using (var startup = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")) {
+        startup.SetValue("SnowbrickPrinter", "\""+exe+"\" --background-agent");
+      }
+      string settingsHome=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"SnowbrickPrinter");
+      Directory.CreateDirectory(settingsHome);
+      string configPath=Path.Combine(settingsHome,"settings.json");
+      var serializer=new JavaScriptSerializer();
+      var config=File.Exists(configPath)?serializer.Deserialize<Dictionary<string,object>>(File.ReadAllText(configPath)):new Dictionary<string,object>();
+      config["startup"]=true;File.WriteAllText(configPath,serializer.Serialize(config),new UTF8Encoding(false));
+
       if (MessageBox.Show("Установка завершена. Открыть приложение?", "Снегострой", MessageBoxButtons.YesNo) == DialogResult.Yes) Process.Start(exe);
     } catch (Exception e) { if (check) Environment.Exit(1); else MessageBox.Show(e.Message,"Не удалось установить",MessageBoxButtons.OK,MessageBoxIcon.Error); }
   }

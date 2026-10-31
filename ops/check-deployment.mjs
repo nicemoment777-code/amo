@@ -20,6 +20,14 @@ assert.equal((await request('/integrations/amocrm', {headers})).status, 200);
 const crmStatus = await request('/api/amocrm/status', {headers});
 assert.equal(crmStatus.status, 200);
 assert.equal((await crmStatus.json()).redirectUri, origin + '/integrations/amocrm/callback');
+const menu=await request('/',{headers});assert.equal(menu.status,200);assert.match(await menu.text(),/Все заявки/);
+for(const asset of ['/printer.js','/printer.css','/printer-model.js'])assert.equal((await request(asset,{headers})).status,200);
+assert.equal((await request('/api/browser/devices')).status,401);
+const webOrders=await request('/api/browser/catalog?from=1790802000',{headers});assert.equal(webOrders.status,200);
+const webData=await webOrders.json();assert.ok(Array.isArray(webData.items));
+assert.ok(webData.items.every(v=>Array.isArray(v.skus)&&!('composition' in v)&&!('labelHost' in v)));
+const sharedHistory=await request('/api/browser/history',{headers});assert.equal(sharedHistory.status,200);
+console.log('Web menu and protected server catalog verified. Orders: '+webData.items.length+'.');
 const state = async () => { const response = await request('/api/state', {headers}); assert.equal(response.status, 200); return response.json(); };
 const waitForIdle = async () => {
   const deadline = Date.now() + 240000;

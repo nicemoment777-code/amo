@@ -103,7 +103,7 @@ server {
     listen 80;
     listen [::]:80;
     server_name $DOMAIN;
-    client_max_body_size 2m;
+    client_max_body_size 8m;
 
     location ^~ /webhooks/cdek/ {
         access_log off;
