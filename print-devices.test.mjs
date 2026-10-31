@@ -39,3 +39,22 @@ test('two computers cannot claim one label, even after restart or interrupted pr
   assert.deepEqual(await restart.claim(123,'a'),{claimed:false});
   await assert.rejects(restart.claim('invalid','a'));
 });
+
+test('shared print history persists, imports idempotently, and never frees a claim', async t => {
+  const dir=await mkdtemp(join(tmpdir(),'print-history-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const file=pathToFileURL(join(dir,'devices.json'));
+  let service=await createPrintDevices(file,{now:()=>200000});
+  await service.claim(12,'a');
+  assert.equal(service.history().printed['12'],undefined);
+  assert.equal(service.history().uncertain['12'].status,'reserved-on-server');
+  const entry={id:'12',eventId:'a'.repeat(64),at:100,status:'submitted',printer:'P1',mode:'manual'};
+  await service.record([entry],'b'); await service.record([entry],'b');
+  assert.equal(service.history().events.length,1);
+  assert.equal(service.history().printed['12'].status,'submitted');
+  assert.deepEqual(await service.claim(12,'c'),{claimed:false});
+  await assert.rejects(service.record([{...entry,printer:'P2'}],'b'));
+  await assert.rejects(service.record([{...entry,eventId:'b'.repeat(64),status:'uncertain'}],'b'));
+  service=await createPrintDevices(file);
+  assert.equal(service.history().events.length,1);
+  assert.equal(service.history().printed['12'].at,100);
+});

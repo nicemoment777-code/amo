@@ -54,6 +54,17 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
     return response.json();
   }
   const fieldText = (lead, name) => (lead.custom_fields_values || []).filter(f => f.field_name?.trim().toLowerCase() === name.toLowerCase()).flatMap(f => f.values || []).map(v => v.value).filter(v => typeof v === 'string').join('\n').trim();
+  function packageWeight(lead) {
+    const candidates=(lead.custom_fields_values||[]).filter(f=>/^(итоговый вес|общий вес|вес посылки|вес заказа|вес отправления|вес)(\s*[(,]\s*(кг|г|kg|g)[)]?)?$/i.test(f.field_name?.trim()||''));
+    const texts=candidates.flatMap(f=>(f.values||[]).map(v=>{
+      const raw=String(v.value??'').trim();
+      if (!/^\d+(?:[.,]\d+)?(?:\s*(?:кг|г|kg|g))?$/i.test(raw) || !(parseFloat(raw.replace(',','.'))>0)) return null;
+      const unit=f.field_name.match(/(?:[(,]\s*)(кг|г|kg|g)[)]?$/i)?.[1];
+      return raw+(!/(кг|г|kg|g)$/i.test(raw)&&unit?' '+unit:'');
+    })).filter(Boolean);
+    const unique=[...new Set(texts)];
+    return unique.length===1?unique[0]:null;
+  }
   function printItem(lead) {
     const {label, service:deliveryService} = deliveryInfo(lead);
     const composition = fieldText(lead, 'Состав заказа');
@@ -64,7 +75,7 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
       .flatMap(f => f.values || []).map(v => v.value)
       .find(value => (typeof value === 'string' && value.trim()) || (typeof value === 'number' && Number.isSafeInteger(value)));
     const orderNumber = orderValue('ORDERID') ?? orderValue('Номер заказа');
-    return {id: lead.id, orderNumber: orderNumber == null ? null : String(orderNumber).trim(), deliveryService, createdAt: lead.created_at, pipelineId: lead.pipeline_id, composition, hasLabel: Boolean(labelHost), labelHost};
+    return {id: lead.id, orderNumber: orderNumber == null ? null : String(orderNumber).trim(), deliveryService, createdAt: lead.created_at, pipelineId: lead.pipeline_id, packageWeight: packageWeight(lead), composition, hasLabel: Boolean(labelHost), labelHost};
   }
   return {
     printCandidates: (from, sample = false) => serial(async () => {

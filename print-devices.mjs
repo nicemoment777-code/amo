@@ -7,6 +7,7 @@ export async function createPrintDevices(file, {now = Date.now} = {}) {
   let data = {devices: {}, jobs: {}};
   try { data = JSON.parse(await readFile(file, 'utf8')); await chmod(file, 0o600); }
   catch (e) { if (e.code !== 'ENOENT') throw new Error('Не удалось прочитать устройства печати'); }
+  data.events ||= {};
   const pending = new Map(), attempts = new Map();
   let tail = Promise.resolve();
   const serial = work => { const result = tail.then(work); tail = result.catch(() => {}); return result; };
@@ -54,6 +55,30 @@ export async function createPrintDevices(file, {now = Date.now} = {}) {
     },
     list: () => Object.entries(data.devices).map(([id, item]) => ({id, name: item.name, revoked: item.revoked})),
     revoke: id => serial(async () => { if (!data.devices[id]) throw new Error('Устройство не найдено'); await save({...data, devices: {...data.devices, [id]: {...data.devices[id], revoked: true}}}); return {ok: true}; }),
+    history: () => ({
+      printed: Object.fromEntries(Object.entries(data.jobs).filter(([,v])=>v.status==='printed').map(([id,v])=>[id,{at:Math.floor(v.at/1000),status:'submitted'}])),
+      uncertain: Object.fromEntries(Object.entries(data.jobs).filter(([,v])=>v.status==='claimed').map(([id,v])=>[id,{at:Math.floor(v.at/1000),status:'reserved-on-server'}])),
+      events: Object.values(data.events)
+    }),
+    record: (entries, owner) => serial(async () => {
+      if (!Array.isArray(entries) || entries.length>100) throw new Error('Некорректный журнал печати');
+      const events={...data.events}, jobs={...data.jobs};
+      for (const entry of entries) {
+        const id=validId(entry.id), eventId=entry.eventId;
+        if (!/^[a-f0-9]{64}$/.test(eventId || '') || !Number.isSafeInteger(entry.at) || entry.at<0 || entry.at>Math.floor(now()/1000)+300 ||
+            entry.status!=='submitted' || typeof entry.printer!=='string' || entry.printer.length>256) throw new Error('Некорректная запись печати');
+        const key=hash(owner+':'+eventId);
+        const value={id,eventId,at:entry.at,printer:entry.printer,status:'submitted',mode:entry.mode==='auto'?'auto':'manual'};
+        if (events[key]) {
+          if (JSON.stringify(events[key])!==JSON.stringify(value)) throw new Error('Запись печати уже сохранена с другими данными');
+          continue;
+        }
+        events[key]=value;
+        if (jobs[id]?.status!=='printed' || jobs[id].at<entry.at*1000) jobs[id]={owner,status:'printed',at:entry.at*1000};
+      }
+      await save({...data,events,jobs});
+      return {ok:true};
+    }),
     claim: (id, owner) => serial(async () => {
       id = validId(id);
       if (data.jobs[id]) return {claimed: false};

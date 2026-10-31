@@ -46,6 +46,11 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
         const legacy = bearer && /^[a-f0-9]{64}$/.test(printAgentHash) && timingSafeEqual(createHash('sha256').update(bearer).digest(), Buffer.from(printAgentHash, 'hex'));
         const owner = legacy ? 'legacy' : printDevices?.authorize(bearer);
         if (!auth.enabled || !amocrm || !owner) return json(401, {error: 'Нет доступа к печати'});
+        if (printDevices && path==='/api/print-agent/history') {
+          if (req.method==='GET') return json(200,printDevices.history());
+          if (req.method==='POST') return json(200,await printDevices.record((await readJson(req,100000)).entries,owner));
+          return json(405,{error:'Недопустимое действие'});
+        }
         if (printDevices && req.method === 'POST' && ['/api/print-agent/claim', '/api/print-agent/complete'].includes(path)) {
           const body = await readJson(req, 1024);
           return json(200, path.endsWith('/claim') ? await printDevices.claim(body.id, owner) : await printDevices.complete(body.id, owner));
@@ -103,6 +108,10 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
       if (auth.enabled && !session && !publicPaths.has(path)) {
         if (path.startsWith('/api/')) return json(401, {error: 'Войдите в аккаунт'});
         return redirect('/login');
+      }
+      if (req.method==='GET' && path==='/api/printing/history' && printDevices) {
+        if (!auth.enabled || !session) return json(403,{error:'Войдите на сайт'});
+        return json(200,printDevices.history());
       }
       if (req.method === 'GET' && path === '/api/auth/session') return json(200, {enabled: auth.enabled, username: session?.username});
       if (amocrm && (path.startsWith('/api/amocrm/') || path === '/integrations/amocrm' || path === '/amocrm.js')) {
