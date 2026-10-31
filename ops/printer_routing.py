@@ -7,6 +7,16 @@ class PrinterRoutingError(ValueError):
     pass
 
 def normalize_routes(config):
+    result=_normalize_article_routes(config)
+    if isinstance(config,dict) and 'deliveryPrinters' in config:
+        values=config['deliveryPrinters']
+        if not isinstance(values,dict) or any(k not in ('cdek','yandex') or not isinstance(v,str) or len(v)>256 for k,v in values.items()):
+            raise PrinterRoutingError('Некорректные принтеры доставок')
+        result['deliveryPrinters']={key:value.strip() for key,value in values.items()}
+    return result
+
+
+def _normalize_article_routes(config):
     if isinstance(config,dict) and 'slots' in config:
         if not isinstance(config['slots'],list): raise PrinterRoutingError('Некорректные строки принтеров')
         slots=[]; selected_printers=set()
@@ -54,6 +64,13 @@ def load_routes(folder):
 
 def choose_printer(item, config, default):
     config=normalize_routes(config)
+    service=item.get('deliveryService')
+    delivery=config.get('deliveryPrinters',{})
+    if service in delivery:
+        if not delivery[service]:
+            raise PrinterRoutingError('Для доставки не назначен принтер. Проверьте настройки.')
+        group_key(item)  # Даже маршрут доставки не разрешает печать без артикула.
+        return delivery[service]
     if not config['enabled']: return default
     owners={sku:route['printer'] for route in config['routes'] for sku in route['skus']}
     skus=group_key(item)

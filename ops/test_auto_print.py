@@ -32,6 +32,7 @@ class AutoPrintTests(unittest.TestCase):
             items=[{'id':n,'createdAt':n,'composition':'(A)','hasLabel':True} for n in (1,2)]
             w.atomic_json(w.DATA/'state.json',{'activatedAt':0,'scanFrom':0,'pending':{},'printed':{},'uncertain':{}})
             def request(path,body=None):
+                if path=='history': return b'{"printed":{},"uncertain":{}}'
                 if path.startswith('leads?'): return json.dumps({'items':items}).encode()
                 if path.startswith('item/'): return json.dumps(items[int(path.split('/')[1])-1]).encode()
                 return b'{"claimed":true}'

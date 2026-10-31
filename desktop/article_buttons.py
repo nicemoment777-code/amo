@@ -6,11 +6,40 @@ from tkinter import font as tkfont
 BG = '#f4f6fb'
 
 
+class CompactArticle(tk.Canvas):
+    def __init__(self,parent,command):
+        super().__init__(parent,height=28,width=80,bg=BG,highlightthickness=0,takefocus=True)
+        self.command=command; self.options={'text':'','bg':BG,'fg':'#142346','state':'normal'}
+        self.bind('<Button-1>',lambda _:self.invoke())
+        self.bind('<Return>',lambda _:self.invoke())
+        self.bind('<space>',lambda _:self.invoke())
+    def invoke(self):
+        if self.options['state']=='normal': return self.command()
+    def configure(self,cnf=None,**kw):
+        from orders_view import rounded
+        for key in list(kw):
+            if key in ('text','bg','fg','state','activebackground','activeforeground','disabledforeground'):
+                self.options[key]=kw.pop(key)
+        super().configure(cnf,**kw)
+        if not hasattr(self,'options'): return
+        self.delete('all')
+        width=tkfont.Font(family='Segoe UI',size=9).measure(self.options['text'])+18
+        super().configure(width=width)
+        rounded(self,1,1,width-2,26,9,fill=self.options['bg'],outline='')
+        self.create_text(width/2,14,text=self.options['text'],font=('Segoe UI',9),
+                         fill=self.options['fg'] if self.options['state']=='normal' else '#7e8796')
+    config=configure
+    def cget(self,key):
+        return self.options[key] if key in self.options else super().cget(key)
+
+
+
 class ArticleButtons(ttk.Frame):
-    def __init__(self, parent, empty='Артикулов в заявках пока нет', rows=1, with_actions=False, wrap=False):
+    def __init__(self, parent, empty='Артикулов в заявках пока нет', rows=1, with_actions=False, wrap=False, compact=False):
         super().__init__(parent)
         self.empty = empty; self.buttons = {}; self.commands = {}; self.keys = None
         self.rows=max(1,rows)
+        self.compact=compact
         self.wrap=wrap; self.flow_columns=0
         self.with_actions=with_actions; self.action_buttons={}; self.action_commands={}; self.cells={}
         self.columnconfigure(1, weight=1)
@@ -48,11 +77,14 @@ class ArticleButtons(ttk.Frame):
                 used+=widths[index]
                 has_action=self.with_actions and key not in ((),None)
                 cell=tk.Frame(self.content if self.wrap else lines[row],bd=1 if has_action else 0,relief='solid',padx=4 if has_action else 0,pady=4 if has_action else 0)
-                if not self.wrap: cell.pack(side='left',padx=(0,10),pady=3)
+                if not self.wrap: cell.pack(side='left',padx=(0,4 if self.compact else 10),pady=2 if self.compact else 3)
                 self.cells[key]=cell
-                button = tk.Button(cell, font=('Segoe UI', 10), relief='flat' if has_action else 'solid', bd=0 if has_action else 1,
-                                   padx=10, pady=5, takefocus=True, cursor='hand2',
-                                   command=lambda k=key: self.commands[k]())
+                if self.compact:
+                    button=CompactArticle(cell,command=lambda k=key:self.commands[k]())
+                else:
+                    button = tk.Button(cell, font=('Segoe UI', 10), relief='flat' if has_action else 'solid', bd=0 if has_action else 1,
+                                       padx=10, pady=5, takefocus=True, cursor='hand2',
+                                       command=lambda k=key: self.commands[k]())
                 button.pack(side='top' if self.wrap else 'left',fill='x' if self.wrap else 'none')
                 button.bind('<MouseWheel>', self.wheel)
                 self.buttons[key] = button

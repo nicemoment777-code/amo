@@ -48,7 +48,7 @@ def prepare(item, for_print=False, variant=''):
     source = DATA / f"label-{item['id']}-original.pdf"
     target = DATA / f"label-{item['id']}-print{variant}.pdf"
     source.write_bytes(load_pdf(archive_directory(),item,request))
-    details = prepare_label(source, target, item['composition'], delivery_service=item.get('deliveryService'))
+    details = prepare_label(source, target, item['composition'], delivery_service=item.get('deliveryService'), package_weight=item.get('packageWeight'))
     prefix = target.with_suffix('')
     subprocess.run([str(POPPLER), '-r', '203', '-singlefile', '-png', str(target), str(prefix)], check=True, capture_output=True)
     # Check that barcodes which are readable in the original remain readable.
@@ -66,6 +66,12 @@ def prepare(item, for_print=False, variant=''):
     if for_print and details['barcodeOverlap']:
         raise RuntimeError('Область состава перекрывает исходный штрихкод; печать остановлена')
     return target, prefix.with_suffix('.png'), details
+
+def sync_history():
+    from server_history import sync_history as sync
+    from types import SimpleNamespace
+    return sync(SimpleNamespace(DATA=DATA,request=request,atomic_json=atomic_json))
+
 
 def select_printer(item):
     return choose_printer(item,load_routes(DATA),PRINTER)
@@ -98,6 +104,7 @@ def run_once():
         atomic_json(state_path, {'activatedAt': now, 'scanFrom': now, 'pending': {}, 'printed': {}, 'uncertain': {}})
     state = json.loads(state_path.read_text(encoding='utf-8'))
     scan_started = int(time.time())
+    sync_history()
     candidates = json.loads(request('leads?from=' + str(max(state['activatedAt'], state['scanFrom']-300))))
     for item in candidates['items']:
         key = str(item['id'])
@@ -143,6 +150,7 @@ def run_once():
             del state['uncertain'][key]
             count += 1
             atomic_json(state_path, state)
+            sync_history()
         except Exception as error:
             errors.append({'id':key,'type':type(error).__name__})
     summary = {'at': datetime.now(timezone.utc).isoformat(), 'submitted':count, 'waiting':waiting,'pending':len(state['pending']), 'uncertain':len(state['uncertain']), 'errors':errors, 'order':[item['id'] for item in ordered]}
@@ -194,6 +202,7 @@ def print_batch():
 def main():
     DATA.mkdir(parents=True, exist_ok=True)
     parser = argparse.ArgumentParser()
+    parser.add_argument('--sync-history', action='store_true')
     parser.add_argument('--probe', action='store_true')
     parser.add_argument('--download', type=int)
     parser.add_argument('--prepare', type=int)
@@ -203,7 +212,11 @@ def main():
     parser.add_argument('--prepare-batch', type=int)
     parser.add_argument('--print-batch', action='store_true')
     args = parser.parse_args()
-    if args.probe:
+    if args.sync_history:
+        with agent_lock():
+            history=sync_history()
+            print(json.dumps({'synced':True,'confirmed':len(history['printed']),'events':len(history.get('events',[]))}))
+    elif args.probe:
         data = json.loads(request('leads?from=0&sample=1'))
         (DATA / 'sample.json').write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
         ready = [v for v in data['items'] if v['hasLabel'] and v['composition']]

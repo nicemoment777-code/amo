@@ -44,6 +44,10 @@ def _manual_print_locked(worker, item_id, expected_printer=None, expected_servic
     try: worker.request('complete',{'id':int(key)})
     except Exception: server_recorded=False
     worker.atomic_json(receipt,{**record,'status':'submitted','serverRecorded':server_recorded})
+    if callable(getattr(worker,'sync_history',None)):
+        try: worker.sync_history()
+        except Exception:
+            worker.atomic_json(worker.DATA/'history-sync-error.json',{'pending':True,'at':int(time.time())})
     return details
 
 def print_separator(worker,details,printer):

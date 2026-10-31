@@ -29,6 +29,15 @@ class PrinterPanel(ttk.Frame):
         heading=ttk.Frame(self); heading.pack(fill='x',pady=(0,5))
         ttk.Label(heading,text='Принтеры и артикулы',font=('Segoe UI',12,'bold')).pack(side='left')
         ttk.Button(heading,text='Сохранить назначения',style='Accent.TButton',command=self.save).pack(side='right')
+        services=ttk.LabelFrame(self,text='Принтер по доставке — имеет приоритет над артикулами',padding=8)
+        services.pack(fill='x',pady=(0,10)); self.service_vars={}; self.service_combos=[]
+        for service,label in [('yandex','Яндекс доставка'),('cdek','СДЭК доставка')]:
+            ttk.Label(services,text=label).pack(side='left',padx=(4,8))
+            var=tk.StringVar(value=config.get('deliveryPrinters',{}).get(service) or 'По артикулам')
+            self.service_vars[service]=var
+            combo=ttk.Combobox(services,textvariable=var,state='readonly',width=28)
+            combo.pack(side='left',padx=(0,16)); self.service_combos.append(combo)
+            combo.bind('<<ComboboxSelected>>',lambda _:self.queue_save())
         table=ttk.Frame(self); table.pack(fill='x'); self.table=table
         ttk.Label(table,text='Принтер Windows',foreground='#737d94').grid(row=0,column=1,sticky='w',padx=8)
         ttk.Label(table,text='Артикулы для печати',foreground='#737d94').grid(row=0,column=2,sticky='w',padx=8)
@@ -49,12 +58,14 @@ class PrinterPanel(ttk.Frame):
         combo=ttk.Combobox(self.table,textvariable=row['printer'],state='readonly',width=27)
         combo.grid(row=y,column=1,sticky='ew',padx=8,pady=3); row['combo']=combo
         combo.bind('<<ComboboxSelected>>',lambda _,i=index:self.printer_changed(i))
-        row['articles']=ArticleButtons(self.table)
+        row['articles']=ArticleButtons(self.table,compact=True)
         row['articles'].grid(row=y,column=2,sticky='ew',padx=8,pady=3)
         ttk.Button(self.table,text='Очистить',command=lambda i=index:self.clear(i)).grid(row=y,column=3,padx=(8,0),pady=3)
         self.rows.append(row)
     def set_printers(self,names):
         self.names=list(names)
+        for combo,var in zip(self.service_combos,self.service_vars.values()):
+            combo.configure(values=list(dict.fromkeys(['По артикулам']+self.names+([var.get()] if var.get()!='По артикулам' else []))))
         for row in self.rows:
             values=[EMPTY_PRINTER]+self.names
             if row['printer'].get() not in values: values.append(row['printer'].get())
@@ -97,6 +108,7 @@ class PrinterPanel(ttk.Frame):
         try:
             enabled=self.routing_enabled or any(self.selected(i) for i in range(len(self.rows)))
             config=routes_from_rows([(row['printer'].get(),self.selected(i)) for i,row in enumerate(self.rows)],enabled)
+            config['deliveryPrinters']={key:var.get() for key,var in self.service_vars.items() if var.get()!='По артикулам'}
             if self.on_save(config,automatic):
                 self.dirty=False; self.routing_enabled=enabled
                 self.description.set('Сохранено автоматически. Выбор принтеров и артикулов восстановится при следующем запуске.')

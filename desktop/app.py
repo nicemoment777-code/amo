@@ -39,6 +39,7 @@ from orders_model import MOSCOW, read_json, order_groups, parse_period, merge_ca
 from orders_view import OrdersBoard, DatePicker, BG, INK, MUTED
 from printer_routing import load_routes, normalize_routes, choose_printer, PrinterRoutingError
 from printer_panel import PrinterPanel
+from server_history import merge_history
 from rounded_controls import RoundedNotebook, RoundedArticleCards, RoundedButton
 from order_diagnostics import error_reasons
 from auto_print import auto_print_enabled, set_auto_print
@@ -135,9 +136,11 @@ class App:
         self.select_button=ttk.Button(self.browse_actions,text='Выбрать несколько',command=self.toggle_selection)
         self.select_button.pack(side='left')
         ttk.Button(self.browse_actions,text='Все заявки / история',command=lambda:self.carrier.set('Все доставки')).pack(side='left',padx=8)
-        self.delivery_menu=ttk.Notebook(frame,height=1)
+        self.delivery_menu=RoundedNotebook(frame,delivery=True)
+        self.delivery_menu.configure(height=1)
         self.delivery_menu_index=0
-        self.delivery_menu.pack(fill='x',before=self.browse_actions,pady=(8,8))
+        self.delivery_menu.header.pack_configure(before=self.browse_actions,padx=0)
+        self.delivery_menu.pack(fill='x',before=self.browse_actions,pady=(0,2))
         for label in ['Яндекс доставка','СДЭК доставка']:
             self.delivery_menu.add(ttk.Frame(self.delivery_menu),text=label)
         self.delivery_menu.bind('<<NotebookTabChanged>>',self.delivery_changed)
@@ -305,6 +308,7 @@ class App:
     def tab_changed(self,_=None):
         self.board=self.boards[self.tabs.index('current')]
         self.render(True)
+        if not self.smoke: self.reload()
     def store_routes(self,config,automatic=False):
         if self.busy:
             if not automatic: self.note('Дождитесь завершения текущего действия.')
@@ -349,7 +353,7 @@ class App:
     def render(self,reset=False):
         try: start,end=self.period()
         except ValueError as e: return self.note(str(e))
-        state=read_json(self.worker.DATA/'state.json',{})
+        state=merge_history(self.worker.DATA,read_json(self.worker.DATA/'state.json',{}))
         catalog=self.search_catalog()
         carrier={'СДЭК':'cdek','Яндекс':'yandex','Не указана':'unknown'}.get(self.carrier.get())
         from orders_model import delivery_service
@@ -407,6 +411,7 @@ class App:
         def work():
             try:
                 # Полный каталог только для просмотра; автоочередь и история печати отдельно.
+                self.worker.sync_history()
                 incoming=json.loads(self.worker.request(f'leads?from={fetch_start}'))['items']
                 catalog=merge_catalog([],[item for item in incoming if item.get('createdAt',0)>=fetch_start])
                 self.worker.atomic_json(self.worker.DATA/'order-catalog.json',catalog)
@@ -417,12 +422,12 @@ class App:
                         if self.login_window and self.login_window.winfo_exists(): self.login_window.destroy()
                     self.connection.set('Есть соединение с amoCRM · Обновлено '+datetime.now(MOSCOW).strftime('%d.%m.%Y %H:%M:%S')+' МСК')
                     self.connection_label.configure(foreground='#008a44')
-                    self.note('Заказы обновлены. Зелёная отметка — подтверждение отправки драйверу.')
+                    self.note('Заказы и серверная история обновлены. Зелёная отметка — подтверждение отправки драйверу.')
                     if not self.smoke: self.start_archive(catalog)
                 self.ui(loaded)
             except Exception:
                 def failed():
-                    self.connection.set('Нет соединения с amoCRM · Не удалось обновить карточки')
+                    self.connection.set('Нет соединения с amoCRM · Не удалось сверить amoCRM и серверную историю')
                     self.connection_label.configure(foreground='#c5203e')
                     self.note('Показана сохранённая история. Для повторной проверки нажмите «Проверить связь и обновить».')
                 self.ui(failed)
@@ -456,7 +461,7 @@ class App:
         window.protocol('WM_DELETE_WINDOW',window.withdraw)
         container=ttk.Frame(window,padding=24); container.pack(fill='both',expand=True)
         ttk.Label(container,text='Настройки печати',font=('Segoe UI',20,'bold')).pack(anchor='w',pady=(0,16))
-        self.settings_tabs=ttk.Notebook(container); self.settings_tabs.pack(fill='both',expand=True)
+        self.settings_tabs=RoundedNotebook(container); self.settings_tabs.pack(fill='both',expand=True)
         routes_page=ttk.Frame(self.settings_tabs,padding=16)
         frame=ttk.Frame(self.settings_tabs,padding=16)
         self.settings_tabs.add(routes_page,text='Принтеры и артикулы')
@@ -472,7 +477,7 @@ class App:
         journal_top=ttk.Frame(journal_page); journal_top.pack(fill='x',pady=(0,10))
         self.journal_summary=tk.StringVar()
         ttk.Label(journal_top,textvariable=self.journal_summary,font=('Segoe UI',11,'bold')).pack(side='left')
-        ttk.Button(journal_top,text='Обновить журнал',command=self.refresh_journal).pack(side='right')
+        ttk.Button(journal_top,text='Сверить с сервером',command=self.reload).pack(side='right')
         ttk.Label(journal_page,text='Время МСК. Успех — передача драйверу; фактический отпечаток проверяется у принтера. Записи сохраняются после закрытия.',foreground=MUTED).pack(anchor='w',pady=(0,10))
         journal_body=ttk.Frame(journal_page); journal_body.pack(fill='both',expand=True)
         columns=('time','order','skus','printer','mode','status')
@@ -503,31 +508,39 @@ class App:
         ttk.Button(row,text='Включить автопечать',command=self.start).pack(side='left')
         ttk.Button(row,text='Остановить',command=self.stop).pack(side='left',padx=8)
         ttk.Button(row,text='Открыть журнал',command=lambda:os.startfile(str(self.worker.DATA))).pack(side='left')
-        ttk.Label(frame,text='Этикетка 1:1 · верхняя полоса 70 × 15 мм · только артикулы.\nПовторная печать — с карточки конкретного заказа.\nЗелёный значок подтверждает передачу драйверу, а не выход бумаги.',foreground=MUTED).pack(anchor='w',pady=18)
+        ttk.Label(frame,text='СДЭК 1:1 · Яндекс 75 × 110 мм · сверху артикулы и вес в кг.\nПовторная печать — с карточки конкретного заказа.\nЗелёный значок подтверждает передачу драйверу, а не выход бумаги.',foreground=MUTED).pack(anchor='w',pady=18)
         self.log=tk.Text(frame,height=8,wrap='word',font=('Segoe UI',10),bd=0,padx=10,pady=10)
         self.log.pack(fill='both',expand=True); self.log.insert('end','\n'.join(self.settings_log)); self.log.configure(state='disabled')
+    def history_warning(self):
+        return ' Серверная история ожидает связи; повторять печать не нужно.' if (self.worker.DATA/'history-sync-error.json').exists() else ''
     def refresh_journal(self):
         if not hasattr(self,'journal_tree'): return
-        try: entries=read_entries(self.worker.DATA)
+        try:
+            entries=read_entries(self.worker.DATA)
+            remote=read_json(self.worker.DATA/'server-history.json',{})
+            # Local entries have richer detail; show remote copies from other PCs as well.
+            local={(str(v.get('id')),int(v.get('at',0)),v.get('printer') or '') for v in entries if v.get('status')=='submitted'}
+            entries.extend(v for v in remote.get('events',[]) if (str(v.get('id')),int(v.get('at',0)),v.get('printer') or '') not in local)
         except (OSError,ValueError,TypeError,KeyError,AttributeError):
             self.journal_summary.set('Не удалось прочитать журнал печати.'); return
         self.journal_tree.delete(*self.journal_tree.get_children())
         catalog={str(item['id']):item for item in self.catalog}; days={}
         for entry in entries:
-            day=datetime.fromtimestamp(entry.get('at',0),MOSCOW).strftime('%Y-%m-%d')
+            day=datetime.fromtimestamp(entry['at'],MOSCOW).strftime('%Y-%m-%d') if entry.get('at') else 'unknown'
             days.setdefault(day,[]).append(entry)
         count=sum(entry.get('status')=='submitted' for entry in entries)
         self.journal_summary.set(f'Отправлено этикеток: {count} · Дней: {len(days)}')
         for index,(day,values) in enumerate(sorted(days.items(),reverse=True)):
             total=sum(entry.get('status')=='submitted' for entry in values)
-            parent=self.journal_tree.insert('', 'end',text=f'{datetime.strptime(day,"%Y-%m-%d"):%d.%m.%Y} · {total} шт.',open=index==0)
+            day_label=datetime.strptime(day,'%Y-%m-%d').strftime('%d.%m.%Y') if day!='unknown' else 'Дата не сохранена'
+            parent=self.journal_tree.insert('', 'end',text=f'{day_label} · {total} шт.',open=index==0)
             for entry in values:
                 item=catalog.get(str(entry['id']),{})
                 number=entry.get('orderNumber') or item.get('orderNumber')
                 order=('№ '+str(number)) if number else 'amo '+str(entry['id'])
                 skus=entry.get('skus') or sku_set(item)
                 success=entry.get('status')=='submitted'
-                self.journal_tree.insert(parent,'end',values=(datetime.fromtimestamp(entry.get('at',0),MOSCOW).strftime('%H:%M:%S'),order,'; '.join(skus),entry.get('printer') or 'Не записан','Ручная' if entry.get('mode')=='manual' else 'Авто','Передано драйверу' if success else 'Нет подтверждения'),tags=('success' if success else 'uncertain',))
+                self.journal_tree.insert(parent,'end',values=(datetime.fromtimestamp(entry['at'],MOSCOW).strftime('%H:%M:%S') if entry.get('at') else '—',order,'; '.join(skus),entry.get('printer') or 'Не записан','Ручная' if entry.get('mode')=='manual' else 'Авто','Передано драйверу' if success else 'Нет подтверждения'),tags=('success' if success else 'uncertain',))
     def save(self):
         self.config.update(printer=self.printer.get(),startup=self.startup.get(),enabled=self.running)
         temp=CONFIG.with_suffix('.tmp'); temp.write_text(json.dumps(self.config,ensure_ascii=False),encoding='utf-8'); os.replace(temp,CONFIG)
@@ -637,7 +650,9 @@ class App:
         def work():
             try:
                 self.manual_print(item['id'],actual_printer)
-                self.ui(lambda:self.note(f"Этикетка заказа {order_title(item)} отправлена: 1 экземпляр. Проверьте отпечаток."))
+                self.ui(lambda:self.note(f"Этикетка заказа {order_title(item)} отправлена: 1 экземпляр. Проверьте отпечаток."+self.history_warning()))
+            except ValueError as error:
+                message=str(error); self.ui(lambda:self.note(message))
             except Exception: self.ui(lambda:self.note('Печать не подтверждена. Проверьте очередь Windows и журнал. Автоматического повтора не будет.'))
             finally:
                 self.busy=False; self.operation_lock.release()
@@ -645,7 +660,7 @@ class App:
         self.background(work)
     def show_error(self,item):
         try:
-            state=read_json(self.worker.DATA/'state.json',{})
+            state=merge_history(self.worker.DATA,read_json(self.worker.DATA/'state.json',{}))
             last_run=read_json(self.worker.DATA/'last-run.json',{})
             routing=load_routes(self.worker.DATA)
             reasons=error_reasons(item,state,routing,self.printer.get(),last_run,
@@ -678,7 +693,7 @@ class App:
         if self.busy: return self.note('Дождитесь завершения текущего действия.')
         self.render()
         if self.carrier.get() not in ('Яндекс','СДЭК'): return
-        state=read_json(self.worker.DATA/'state.json',{})
+        state=merge_history(self.worker.DATA,read_json(self.worker.DATA/'state.json',{}))
         items=self.delivery_items
         ready=[v for v in items if v['canPrint'] and str(v['id']) not in state.get('uncertain',{})
                and state.get('printed',{}).get(str(v['id']),{}).get('status')!='reserved-on-server']
@@ -708,7 +723,7 @@ class App:
         if any(v['confirmed'] for v in items): prompt+='\n\nСреди выбранных есть уже отправленные этикетки: будет дополнительный экземпляр.'
         if context: prompt=context+'\n\n'+prompt
         if skipped: prompt+=f'\n\nБез готовой этикетки или с неопределённой печатью: {skipped}. Эти заявки останутся в счётчике и не будут напечатаны.'
-        state=read_json(self.worker.DATA/'state.json',{})
+        state=merge_history(self.worker.DATA,read_json(self.worker.DATA/'state.json',{}))
         if any(str(v['id']) in state.get('uncertain',{}) or state.get('printed',{}).get(str(v['id']),{}).get('status')=='reserved-on-server' for v in items):
             prompt+='\n\nЕсть заявки с неопределённой или зарезервированной печатью. Сначала проверьте физические отпечатки и очереди других устройств: возможен дополнительный экземпляр.'
         if not messagebox.askyesno('Печать выбранных этикеток',prompt,parent=self.root): return
@@ -725,7 +740,7 @@ class App:
                 def completed():
                     text=f"Отправлено этикеток: {len(result['submitted'])}."
                     if result['failed']: text+=' Партия остановлена из-за ошибки. Проверьте статус и очередь; автоматического повтора нет.'
-                    self.note(text)
+                    self.note(text+self.history_warning())
                 self.ui(completed)
             except Exception: self.ui(lambda:self.note('Не удалось завершить партию. Проверьте статусы карточек и очередь принтера.'))
             finally:
@@ -847,12 +862,14 @@ def self_test():
     while not app.actions.empty(): app.actions.get_nowait()()
     assert app.connection.get().startswith('Нет соединения') and len(app.catalog)==9
     requests=[]
-    def online_request(path):
+    def online_request(path,body=None):
+        if path=='history':
+            requests.append(path); return b'{"printed":{},"uncertain":{},"events":[]}'
         requests.append(path); return json.dumps({'items':samples+[{'id':99999999,'createdAt':VISIBLE_FROM-1,'composition':'(SEPTEMBER)','hasLabel':True}]}).encode()
     app.worker.request=online_request
     app.reload()
     while not app.actions.empty(): app.actions.get_nowait()()
-    assert requests==[f'leads?from={VISIBLE_FROM}'] and len(app.catalog)==8
+    assert requests==['history',f'leads?from={VISIBLE_FROM}'] and len(app.catalog)==8
     assert app.connection.get().startswith('Есть соединение')
     assert not (app.worker.DATA/'state.json').exists()
     app.worker.request=original_request

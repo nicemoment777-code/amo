@@ -195,6 +195,15 @@ class ManualPrintTests(unittest.TestCase):
             self.assertNotIn('complete',w.calls)
 
 class RoutingTests(unittest.TestCase):
+    def test_delivery_routes_share_printer_and_preserve_article_routes(self):
+        config=normalize_routes({'routes':[{'printer':'P2','skus':['A']}],
+                                 'deliveryPrinters':{'yandex':'P1','cdek':'P1'}})
+        for service in ('yandex','cdek'):
+            self.assertEqual(choose_printer({'composition':'(A)','deliveryService':service},config,'default'),'P1')
+        self.assertEqual(choose_printer({'composition':'(A)'},config,'default'),'P2')
+        config['deliveryPrinters']['cdek']=''
+        with self.assertRaises(PrinterRoutingError): choose_printer({'composition':'(A)','deliveryService':'cdek'},config,'default')
+
     def test_four_rows_ignore_blank_slots_and_validate_duplicate_ownership(self):
         rows=[('P1',['A','B']),('P2',['C']),(EMPTY_PRINTER,[]),(EMPTY_PRINTER,[])]
         config=routes_from_rows(rows)

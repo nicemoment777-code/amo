@@ -33,3 +33,12 @@ class JournalTests(unittest.TestCase):
     def test_journal_disk_failure_does_not_trigger_print_retry(self):
         with tempfile.TemporaryDirectory() as folder,patch.object(Path,'write_text',side_effect=OSError('disk full')):
             self.assertFalse(append_entry(folder,{'id':1},'P','auto'))
+
+    def test_legacy_test_confirmations_import_without_reprinting_or_inventing_time(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            (root/'test-old.json').write_text(json.dumps({'id':9,'status':'submitted'}))
+            (root/'test-batch-grouped.json').write_text(json.dumps({'at':10,'items':[{'id':9,'status':'submitted'},{'id':10,'status':'submitted'},{'id':11,'status':'prepared'}]}))
+            values=read_entries(root)
+            self.assertEqual({v['id'] for v in values},{'9','10'})
+            self.assertEqual(len(values),2)

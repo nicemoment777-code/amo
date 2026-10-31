@@ -46,6 +46,16 @@ def read_entries(folder):
     for key,value in state.get('printed',{}).items():
         if key not in recorded and value.get('status')=='submitted':
             result.append({**value,'id':key,'mode':'manual' if value.get('manual') else 'auto','legacy':True})
+    recorded.update(str(v['id']) for v in result)
+    for path in folder.glob('test-*.json'):
+        value=read(path)
+        if not isinstance(value,dict): continue
+        for entry in value.get('items',[value]):
+            key=str(entry.get('id',''))
+            if not key or key in recorded or entry.get('status')!='submitted': continue
+            result.append({'id':key,'at':entry.get('at',value.get('at',0)),
+                           'printer':entry.get('printer',''),'status':'submitted','mode':'manual','legacy':True,'receipt':path.name})
+            recorded.add(key)
     for key,value in state.get('uncertain',{}).items():
         result.append({**value,'id':key,'status':'uncertain','mode':'manual' if value.get('manual') else 'auto'})
     return sorted(result,key=lambda value:value.get('at',0),reverse=True)
