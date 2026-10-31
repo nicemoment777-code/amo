@@ -37,6 +37,9 @@ test('login creates a secure session; rotation and logout invalidate old cookies
   const setCookie = signedIn.headers.get('set-cookie');
   for (const marker of ['__Host-amo_session=', 'HttpOnly', 'Secure', 'SameSite=Lax', 'Path=/']) assert.ok(setCookie.includes(marker));
   const cookie = setCookie.split(';')[0];
+  assert.equal((await request('/login', {headers:{Cookie:cookie}})).status,302);
+  const personalLogin=await request('/login?prefill=1', {headers:{Cookie:cookie}});
+  assert.equal(personalLogin.status,200);assert.match(await personalLogin.text(),/rememberLogin/);
   const state = await request('/api/state', {headers: {Cookie: cookie}}); assert.equal(state.status, 200); assert.equal((await state.json()).orders.length, 1); assert.equal(state.headers.get('cache-control'), 'no-store');
   const rotated = await post('/api/auth/login', {username: 'admin', password}, {Cookie: cookie});
   const nextCookie = rotated.headers.get('set-cookie').split(';')[0]; assert.notEqual(nextCookie, cookie);

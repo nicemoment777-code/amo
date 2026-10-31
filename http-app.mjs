@@ -119,7 +119,7 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
         try { await amocrm.callback(params, req.headers.cookie); return redirect('/integrations/amocrm?result=ok'); }
         catch { return redirect('/integrations/amocrm?result=error'); }
       }
-      if (req.method === 'GET' && path === '/login' && (!auth.enabled || session)) return redirect('/');
+      if (req.method === 'GET' && path === '/login' && (!auth.enabled || session) && new URL(req.url,'http://localhost').searchParams.get('prefill') !== '1') return redirect('/');
       if (auth.enabled && !session && !publicPaths.has(path)) {
         if (path.startsWith('/api/')) return json(401, {error: 'Войдите в аккаунт'});
         return redirect('/login');
