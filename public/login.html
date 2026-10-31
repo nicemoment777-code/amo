@@ -15,6 +15,8 @@
         <form id="loginForm" method="post">
           <label for="username">Логин</label><input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="64" value="admin" placeholder="Введите логин" required>
           <label for="password">Пароль</label><div class="password-field"><input id="password" name="password" type="password" autocomplete="current-password" maxlength="256" placeholder="Введите пароль" required autofocus><button type="button" id="togglePassword" aria-label="Показать пароль" aria-pressed="false">Показать</button></div>
+          <label class="remember-login"><input id="rememberLogin" type="checkbox">Сохранять логин и пароль в этом браузере</label>
+          <button id="forgetLogin" type="button" hidden>Забыть сохранённый пароль</button>
           <p id="error" role="alert" hidden></p><button class="submit" type="submit" id="submit">Войти <span aria-hidden="true">→</span></button>
         </form><p class="entry-note">Доступ только для владельца аккаунта.</p>
       </div><footer>Snowbrick · Личный кабинет</footer>
