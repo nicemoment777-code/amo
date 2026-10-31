@@ -564,7 +564,7 @@ class App:
                 self.printer_names=names
                 if self.printer_panel: self.printer_panel.set_printers(names)
                 if self.settings_window and self.settings_window.winfo_exists(): self.printers.configure(values=names)
-                if self.auto_print.get(): self.start()
+                if self.auto_print.get(): self.start(resume=True)
             self.ui(loaded)
         except Exception: self.ui(lambda:self.note('Не удалось получить список принтеров. Проверьте драйвер Windows.'))
     def show_login(self):
@@ -606,17 +606,19 @@ class App:
             except Exception: self.ui(lambda:self.note('Не удалось подключить компьютер. Проверьте интернет и повторите.'))
             finally: self.ui(lambda:setattr(self,'pairing',False))
         self.background(work)
-    def start(self):
+    def start(self, resume=False, enabled_from=None):
         if self.running: return
+        if resume and not auto_print_enabled(self.worker.DATA):
+            self.auto_print.set(False); return
         if self.thread and self.thread.is_alive():
             self.auto_print.set(auto_print_enabled(self.worker.DATA)); return self.note('Дождитесь завершения предыдущей проверки.')
         if self.printer.get() not in self.printer_names:
             self.stop(); return self.note('Выберите установленный принтер в настройках.')
         try:
-            if not auto_print_enabled(self.worker.DATA): set_auto_print(self.worker.DATA,True)
+            if not resume: set_auto_print(self.worker.DATA,True,enabled_from=enabled_from)
         except OSError:
             self.auto_print.set(auto_print_enabled(self.worker.DATA)); return self.note('Не удалось сохранить включение автоматической печати.')
-        self.running=True; self.auto_print.set(True); self.stop_event.clear(); self.save(); self.note('Автоматическая печать включена. Проверка новых заявок каждые 5 минут.')
+        self.running=True; self.auto_print.set(True); self.stop_event.clear(); self.save(); self.note('Автоматическая печать включена. Печатаются только заявки, созданные после включения. Проверка каждые 5 минут.')
         if '--panel-only' in sys.argv: return
         def loop():
             while not self.stop_event.is_set():
@@ -638,7 +640,7 @@ class App:
             self.worker.PRINTER=self.config.get('printer','')
             with contextlib.redirect_stdout(io.StringIO()), self.worker.agent_lock(): result=self.worker.run_once()
             if result.get('paused'):
-                self.ui(lambda:self.note('Автоматическая печать выключена.'))
+                self.ui(lambda:self.note('Выключите и снова включите автопечать, чтобы установить начало новой очереди.' if result.get('requiresActivation') else 'Автоматическая печать выключена.'))
             else:
                 self.ui(lambda:self.note(f"Проверено. Отправлено: {result['submitted']}; ожидают данных: {result['waiting']}."))
         except SystemExit:

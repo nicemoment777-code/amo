@@ -15,7 +15,7 @@ from urllib.error import HTTPError
 from contextlib import contextmanager
 from print_order import group_key, grouped_print_order
 from printer_routing import load_routes, choose_printer
-from auto_print import auto_print_enabled
+from auto_print import auto_print_enabled, auto_print_scope
 from pdf_archive import archive_directory, load_pdf
 from print_journal import append_entry
 
@@ -123,25 +123,34 @@ def run_once():
         summary={'at':datetime.now(timezone.utc).isoformat(),'submitted':0,'paused':True,'errors':[],'order':[]}
         print(json.dumps(summary,ensure_ascii=True))
         return summary
+    scope=auto_print_scope(DATA)
+    if scope is None:
+        summary={'at':datetime.now(timezone.utc).isoformat(),'submitted':0,'paused':True,'requiresActivation':True,'errors':[],'order':[]}
+        print(json.dumps(summary,ensure_ascii=True)); return summary
+    active=lambda: auto_print_enabled(DATA) and auto_print_scope(DATA)==scope
     if not state_path.exists():
-        now = int(time.time())
-        atomic_json(state_path, {'activatedAt': now, 'scanFrom': now, 'pending': {}, 'printed': {}, 'uncertain': {}})
+        atomic_json(state_path, {'activatedAt': scope[0], 'scanFrom': scope[0], 'pending': {}, 'printed': {}, 'uncertain': {}})
     state = json.loads(state_path.read_text(encoding='utf-8'))
+    cutoff=max(state['activatedAt'],scope[0])
     scan_started = int(time.time())
     sync_history()
-    candidates = json.loads(request('leads?from=' + str(max(state['activatedAt'], state['scanFrom']-300))))
+    scan_from=cutoff if state.get('autoPrintGeneration')!=scope[1] else max(cutoff,state['scanFrom']-300)
+    candidates = json.loads(request('leads?from=' + str(scan_from)))
     for item in candidates['items']:
         key = str(item['id'])
-        if key not in state['printed'] and key not in state['uncertain'] and item['createdAt'] >= state['activatedAt']:
+        if key not in state['printed'] and key not in state['uncertain'] and item['createdAt'] >= cutoff:
             state['pending'][key] = item
     state['scanFrom'] = scan_started
+    state['autoPrintGeneration']=scope[1]
     atomic_json(state_path, state)
     count = 0; waiting = 0; errors = []; prepared = {}; ready_items = []
     routing=load_routes(DATA)
     for key in list(state['pending']):
-        if not auto_print_enabled(DATA): break
+        if not active(): break
+        if state['pending'][key].get('createdAt',0)<cutoff: continue
         try:
             item = json.loads(request('item/' + key))
+            if item.get('createdAt',0)<cutoff: continue
             if not item['composition'] or not item['hasLabel']:
                 waiting += 1
                 continue
@@ -153,7 +162,7 @@ def run_once():
             errors.append({'id':key,'type':type(error).__name__})
     ordered = grouped_print_order(ready_items)
     for item in ordered:
-        if not auto_print_enabled(DATA): break
+        if not active(): break
         key = str(item['id'])
         image, details, printer = prepared[key]
         try:
@@ -177,7 +186,7 @@ def run_once():
             sync_history()
         except Exception as error:
             errors.append({'id':key,'type':type(error).__name__})
-    summary = {'at': datetime.now(timezone.utc).isoformat(), 'submitted':count, 'waiting':waiting,'pending':len(state['pending']), 'uncertain':len(state['uncertain']), 'errors':errors, 'order':[item['id'] for item in ordered]}
+    summary = {'at': datetime.now(timezone.utc).isoformat(), 'submitted':count, 'waiting':waiting,'pending':sum(v.get('createdAt',0)>=cutoff for v in state['pending'].values()), 'uncertain':len(state['uncertain']), 'errors':errors, 'order':[item['id'] for item in ordered]}
     atomic_json(DATA/'last-run.json', summary)
     print(json.dumps(summary, ensure_ascii=True))
     if errors or state['uncertain']:

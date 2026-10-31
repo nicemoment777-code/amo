@@ -20,3 +20,9 @@
 #statuses button:not(.active),#settingsTabs button:not(.active){background:#142346;color:white}.articles{grid-template-columns:repeat(auto-fill,minmax(170px,1fr))}
 
 .order .cardheading{display:flex;align-items:center;justify-content:space-between;gap:6px}.order .printicon{width:40px;height:40px;flex:none;padding:8px;border-radius:9px;background:#142346;color:#fff}.order .printicon:disabled{opacity:.65}
+
+.order.multicolor .digits,.order.multicolor .number,.order.multicolor .skuline,.order.multicolor .cardactions{background:#ffffffe6;color:#131936;border-radius:5px}.order.multicolor .digits{padding:2px}.order.multicolor .number,.order.multicolor .cardactions{padding:3px}.article.multicolor>button:not(.printicon),.article.multicolor>small{background:#ffffffe6;color:#131936;border-radius:5px;padding:3px}
+
+.order .cardactions{background:#ffffffd9;color:#131936;border-radius:5px;padding:3px}.order .copy,.order .cardactions button{color:#131936}
+
+.order .skuline>span{flex:1;min-width:0;overflow-wrap:anywhere}

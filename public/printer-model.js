@@ -26,11 +26,28 @@ export function orderedGroups(items) {
 export function skuColors(skus) {
   const text=skus.join('; ').toLowerCase(),ink='#131936';
   if(!skus.length)return ['#e4e8ef',ink];
-  if(skus.length===1)for(const [words,color,foreground] of [
-    [['wsblue','голуб','sky','lightblue'],'#8bd7fa',ink],[['red','красн'],'#ff666d',ink],
-    [['pink','розов'],'#f99bcf',ink],[['green','салат','зелён','зелен'],'#c1f48b',ink],
-    [['blue','синий','синяя'],'#1255cf','#ffffff'],[['black','чёрн','черн'],'#3c424e','#ffffff'],
-    [['yellow','жёлт','желт'],'#ffe19a',ink]])if(words.some(w=>text.includes(w)))return [color,foreground];
+  const names=[
+    ['wsblue|light[ _-]*blue|sky[ _-]*blue|голуб[а-яё]*|небесн[а-яё]*|sky','#8bd7fa',ink],
+    ['dark[ _-]*blue|navy|т[её]мно[ _-]*син[а-яё]*','#142346','#ffffff'],
+    ['lime|лайм[а-яё]*|салатов[а-яё]*','#a3e635',ink],
+    ['red|красн[а-яё]*','#ff666d',ink],['pink|розов[а-яё]*','#f99bcf',ink],
+    ['green|салат[а-яё]*|зел[её]н[а-яё]*','#c1f48b',ink],
+    ['blue|син[а-яё]*','#1255cf','#ffffff'],['black|ч[её]рн[а-яё]*','#3c424e','#ffffff'],
+    ['yellow|ж[её]лт[а-яё]*','#ffe19a',ink],['white|бел[а-яё]*','#ffffff',ink],
+    ['gray|grey|сер[а-яё]*','#b7bdc7',ink],['orange|оранж[а-яё]*','#ffad42',ink],
+    ['purple|violet|фиолет[а-яё]*','#a58bdc',ink]
+  ];
+  // One match consumes a compound colour, so darkblue/lightblue do not add blue again.
+  const pattern=new RegExp(names.map(([words],index)=>`(?<c${index}>${words})`).join('|'),'gu');
+  const found=[];
+  for(const match of text.matchAll(pattern)){
+    const index=names.findIndex((_,i)=>match.groups['c'+i]!==undefined),value=names[index];
+    if(!found.some(v=>v[1]===value[1]))found.push(value);
+  }
+  if(found.length>1)return [`linear-gradient(45deg, ${found.map(v=>v[1]).join(', ')})`,ink];
+  if(found.length)return [found[0][1],found[0][2]];
   let hash=0;for(const char of text)hash=(hash*31+char.codePointAt(0))>>>0;
   return ['hsl('+hash%360+' 70% 80%)',ink];
 }
+
+export const orderColors = item => item.confirmed ? skuColors(item.skus) : ['#ff666d','#131936'];

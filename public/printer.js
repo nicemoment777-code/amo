@@ -1,4 +1,4 @@
-import {day,stamp,title,filterItems,articleCounts,orderedGroups} from '/printer-model.js';
+import {day,stamp,title,filterItems,articleCounts,orderedGroups,skuColors,orderColors} from '/printer-model.js';
 const $=id=>document.getElementById(id);
 const printerIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 9V3h12v6M6 17H3V9h18v8h-3M6 14h12v7H6z"/><path d="M17 11h2"/></svg>';
 const copyIcon='<svg viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 6V2h12v16h-3M2 6h12v16H2z"/></svg>';
@@ -26,7 +26,7 @@ async function command(action,args={}){
 }
 function action(fn){return async event=>{try{await fn(event);}catch(e){notice(e.message,true);}};}
 function currentPeriod(){return range||{from:stamp($('historyStart').value),to:253402289999};}
-function paint(el,colors){el.style.backgroundColor=colors?.[0]||'#e4e8ef';el.style.color=colors?.[1]||'#111936';}
+function paint(el,colors){el.style.background=colors?.[0]||'#e4e8ef';el.style.color=colors?.[1]||'#111936';el.classList.toggle('multicolor',!!colors?.[0]?.startsWith('linear-gradient('));}
 function renderDisabled(){const available=online()&&verified&&!snapshot?.busy;for(const id of ['autoPrint','refreshArticles','printAll','printSelected','saveRoutes','archive','openArchive','startup','refreshPrinters'])$(id).disabled=busy||!available; $('refresh').disabled=busy;$('applyStart').disabled=busy; if(carrier==='all')$('printAll').disabled=true;for(const b of document.querySelectorAll('.printicon'))b.disabled=busy||!available||b.dataset.unready==='true';}
 async function refresh(force=false){
   verified=false;renderDisabled();
@@ -80,7 +80,7 @@ function render(){
   if(skuFilter&&!Array.from(skuFilter).some(s=>available.has(s)))skuFilter=null;
   $('articles').replaceChildren();
   for(const [sku,value] of articleCounts(articlesSource)){
-    const box=node('article',undefined,'article'+(skuFilter?.has(sku)?' chosen':''));paint(box,value.colors);
+    const box=node('article',undefined,'article'+(skuFilter?.has(sku)?' chosen':''));paint(box,skuColors(sku?[sku]:[]));
     const label=node('button',sku||'Без артикула','sku');label.setAttribute('aria-pressed',String(!!skuFilter?.has(sku)));label.onclick=()=>{if(!skuFilter)skuFilter=new Set();if(skuFilter.has(sku))skuFilter.delete(sku);else skuFilter.add(sku);if(!skuFilter.size)skuFilter=null;render();};
     box.append(label,node('small',`${value.count} заявок · ✓ ${value.printed}`));
     const print=node('button',undefined,'printicon');print.innerHTML=printerIcon;print.title='Печатать артикул '+sku;print.disabled=busy||!sku;print.dataset.unready=String(!sku);print.onclick=action(()=>preparePrint(deliveryItems.filter(v=>v.skus.includes(sku)),'article',`Артикул: ${sku}`));box.append(print);$('articles').append(box);
@@ -100,7 +100,7 @@ function render(){
     orders.append(node('h3',d.split('-').reverse().join('.')+` · ${items.length} заявок`,'daytitle'));
     const grid=node('div',undefined,'ordergrid');
     for(const item of items.sort((a,b)=>a.colors[0].localeCompare(b.colors[0])||a.createdAt-b.createdAt||a.id-b.id)){
-      const card=node('article',undefined,'order '+item.deliveryService+(selected.has(String(item.id))?' selected':''));paint(card,item.colors);
+      const card=node('article',undefined,'order '+item.deliveryService+(selected.has(String(item.id))?' selected':''));paint(card,orderColors(item));
       card.title=title(item);const digits=String(item.orderNumber||item.id).replace(/\D/g,'').slice(-4);
       const heading=node('div',undefined,'cardheading');
       const print=node('button',undefined,'printicon');print.innerHTML=printerIcon;print.title='Печатать одну этикетку';print.setAttribute('aria-label','Печатать этикетку '+title(item));print.disabled=!item.canPrint||busy;print.dataset.unready=String(!item.canPrint);print.onclick=action(async e=>{e.stopPropagation();await preparePrint([item],'selected',title(item));});
@@ -171,7 +171,7 @@ $('refresh').onclick=action(async()=>{if(online())await command('refresh');await
 $('printAll').onclick=action(()=>preparePrint(deliveryItems,'carrier',carrier==='yandex'?'Яндекс доставка · все заявки выбранного периода':'СДЭК доставка · все заявки выбранного периода'));
 $('printSelected').onclick=action(()=>preparePrint(visible.filter(v=>selected.has(String(v.id))),'selected','Выбранные заявки'));
 $('confirmPrint').onclick=action(async()=>{const token=plan;plan=null;$('confirmDialog').close();if(!token)return;const result=await command('print',{plan:token});notice(`Отправлено этикеток: ${result.submitted}.`+(result.failed?' Партия остановлена. Проверьте очередь и журнал, автоматического повтора нет.':''),result.failed);selected.clear();render();});
-$('autoPrint').onchange=action(async()=>{const enabled=$('autoPrint').checked;$('autoPrint').checked=!!snapshot?.autoPrint;if(!confirm(`${enabled?'Включить':'Выключить'} автоматическую печать на компьютере «${devices.find(v=>v.id===device)?.name}»?`))return;await command('auto',{enabled});});
+$('autoPrint').onchange=action(async()=>{const enabled=$('autoPrint').checked;$('autoPrint').checked=!!snapshot?.autoPrint;if(!confirm(`${enabled?'Включить':'Выключить'} автоматическую печать на компьютере «${devices.find(v=>v.id===device)?.name}»?${enabled?' Будут печататься только заявки, созданные после этого включения. Прежние заявки автоматически не печатаются.':''}`))return;await command('auto',{enabled});});
 $('settings').onclick=()=>{fillSettings();$('settingsDialog').showModal();};
 for(const b of document.querySelectorAll('[data-close]'))b.onclick=()=>$(b.dataset.close).close();
 for(const b of $('settingsTabs').querySelectorAll('button'))b.onclick=()=>{for(const s of document.querySelectorAll('.settingspage'))s.hidden=s.id!==b.dataset.page;for(const x of $('settingsTabs').querySelectorAll('button'))x.classList.toggle('active',x===b);if(b.dataset.page==='journalPage')renderJournal();};

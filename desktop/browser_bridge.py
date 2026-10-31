@@ -137,7 +137,7 @@ class BrowserBridge:
         if action in ('auto','startup'):
             if type(args.get('enabled')) is not bool: raise ValueError('Не задано состояние переключателя')
             if action=='auto':
-                self.ui(self.app.start if args['enabled'] else self.app.stop)
+                self.ui((lambda:self.app.start(enabled_from=args.get('enabledFrom'))) if args['enabled'] else self.app.stop)
                 if auto_print_enabled(self.worker.DATA)!=args['enabled']: raise ValueError('Не удалось изменить автопечать. Проверьте принтер Windows.')
             else: self.ui(lambda:(self.app.startup.set(args['enabled']),self.app.autostart()))
             return {'message':'Настройка сохранена'}

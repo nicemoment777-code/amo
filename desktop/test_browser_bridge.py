@@ -47,6 +47,20 @@ class BrowserBridgeTests(unittest.TestCase):
 if __name__=='__main__': unittest.main()
 
 class BackgroundWindowTests(unittest.TestCase):
+    def test_restart_resumes_scope_without_moving_the_start_time(self):
+        import threading
+        from app import App
+        from auto_print import set_auto_print
+        with tempfile.TemporaryDirectory() as folder:
+            data=Path(folder);set_auto_print(data,True,enabled_from=100)
+            original=(data/'auto-print.json').read_bytes()
+            app=SimpleNamespace(running=False,thread=None,worker=SimpleNamespace(DATA=data),
+                printer=Mock(),printer_names=['Test printer'],auto_print=Mock(),stop_event=threading.Event(),save=Mock(),note=Mock(),pass_once=Mock())
+            app.printer.get.return_value='Test printer'
+            with patch('app.threading.Thread'):App.start(app,resume=True)
+            self.assertEqual((data/'auto-print.json').read_bytes(),original)
+            self.assertTrue(app.running)
+
     def test_closing_agent_window_hides_it_without_stopping_printing(self):
         from app import App
         root=Mock()

@@ -40,7 +40,8 @@ export async function createBrowserControl(file, {now = Date.now} = {}) {
       }
       if (Object.values(commands).some(v=>v.device===body.device && (v.status==='queued'||v.status==='running') && now()-v.at<1800000)) throw new Error('На компьютере уже выполняется действие. Дождитесь результата.');
       const id=randomBytes(20).toString('hex');
-      await save({...commands,[id]:{device:body.device,action:body.action,args:body.args,requestId:body.requestId,at:now(),status:'queued'}}); return {id};
+      const at=now(),args=body.action==='auto'&&body.args.enabled===true?{...body.args,enabledFrom:Math.ceil(at/1000)}:body.args;
+      await save({...commands,[id]:{device:body.device,action:body.action,args,requestId:body.requestId,at,status:'queued'}}); return {id};
     }),
     take: owner => serial(async()=>{
       for (const [id,v] of Object.entries(commands)) {
