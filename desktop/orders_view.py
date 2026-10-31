@@ -103,7 +103,8 @@ class OrdersBoard(ttk.Frame):
     def card(self,x,y,w,h,item,color,fg):
         c=self.canvas
         rounded(c,x,y+2,w,h,8,fill='#e5e9f2',outline='')
-        rounded(c,x,y,w,h,8,fill=color,outline='')
+        border={'yandex':'#f3c400','cdek':'#169b50'}.get(delivery_service(item),'')
+        rounded(c,x,y,w,h,8,fill=color,outline=border,width=3 if border else 0,tags='carrier-border')
         secondary='#d6e5ff' if fg=='#ffffff' else '#45516b'
         cx=x+w-10; cy=y+10
         c.create_oval(cx-6,cy-6,cx+6,cy+6,fill='#00a854' if item['confirmed'] else '#ef2345',outline='white')

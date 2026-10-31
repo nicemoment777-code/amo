@@ -106,7 +106,7 @@ class App:
         try: self.routes=load_routes(self.worker.DATA)
         except PrinterRoutingError as e:
             self.routes={'enabled':True,'routes':[]}; routing_error=str(e)
-        self.card_filter=None; self.carrier=tk.StringVar(value='Яндекс'); self.search_query=''
+        self.card_filter=None; self.carrier=tk.StringVar(value='Все доставки'); self.search_query=''
         self.selection_mode=False; self.selected_ids=set(); self.visible_cards=[]; self.article_pending={}
         self.article_catalog=set(read_json(self.worker.DATA/'article-catalog.json',[]))
         self.catalog=read_json(self.worker.DATA/'order-catalog.json',[])
@@ -135,16 +135,15 @@ class App:
         self.browse_actions=ttk.Frame(frame); self.browse_actions.pack(fill='x',pady=(0,10))
         self.select_button=ttk.Button(self.browse_actions,text='Выбрать несколько',command=self.toggle_selection)
         self.select_button.pack(side='left')
-        ttk.Button(self.browse_actions,text='Все заявки / история',command=lambda:self.carrier.set('Все доставки')).pack(side='left',padx=8)
         self.delivery_menu=RoundedNotebook(frame,delivery=True)
         self.delivery_menu.configure(height=1)
         self.delivery_menu_index=0
         self.delivery_menu.header.pack_configure(before=self.browse_actions,padx=0)
         self.delivery_menu.pack(fill='x',before=self.browse_actions,pady=(0,2))
-        for label in ['Яндекс доставка','СДЭК доставка']:
+        for label in ['Все заявки','Яндекс доставка','СДЭК доставка']:
             self.delivery_menu.add(ttk.Frame(self.delivery_menu),text=label)
         self.delivery_menu.bind('<<NotebookTabChanged>>',self.delivery_changed)
-        self.delivery_menu.bind('<ButtonRelease-1>',lambda _:root.after_idle(lambda:self.carrier.set(['Яндекс','СДЭК'][self.delivery_menu.index('current')])))
+        self.delivery_menu.bind('<ButtonRelease-1>',lambda _:root.after_idle(lambda:self.carrier.set(['Все доставки','Яндекс','СДЭК'][self.delivery_menu.index('current')])))
         article_heading=ttk.Frame(frame)
         self.delivery_controls=ttk.Frame(article_heading)
         ttk.Label(self.delivery_controls,text='Доставка').pack(side='left',padx=(12,8))
@@ -296,12 +295,12 @@ class App:
         index=self.delivery_menu.index('current')
         if index==self.delivery_menu_index: return
         self.delivery_menu_index=index
-        value=['Яндекс','СДЭК'][index]
+        value=['Все доставки','Яндекс','СДЭК'][index]
         if self.carrier.get()!=value: self.carrier.set(value)
     def carrier_changed(self):
         value=self.carrier.get()
-        if value in ('Яндекс','СДЭК'):
-            self.delivery_menu_index=0 if value=='Яндекс' else 1
+        if value in ('Все доставки','Яндекс','СДЭК'):
+            self.delivery_menu_index=['Все доставки','Яндекс','СДЭК'].index(value)
             self.delivery_menu.select(self.delivery_menu_index)
         self.card_filter=None; self.selected_ids.clear()
         self.render(True)
@@ -794,7 +793,8 @@ def self_test():
         assert json.loads(CONFIG.read_text(encoding='utf-8'))['historyStart']=='15.09.2026'
         refresh.assert_called_once_with(True)
         app.history_start.set('01.10.2026'); app.apply_history_start()
-    assert [app.delivery_menu.tab(v,'text') for v in app.delivery_menu.tabs()]==['Яндекс доставка','СДЭК доставка']
+    assert [app.delivery_menu.tab(v,'text') for v in app.delivery_menu.tabs()]==['Все заявки','Яндекс доставка','СДЭК доставка']
+    assert app.carrier.get()=='Все доставки' and app.delivery_menu.index('current')==0
     root.update(); app.carrier.set('Все доставки'); root.update()
     app.settings(); app.settings_window.withdraw(); root.update_idletasks()
     assert app.printer_panel.winfo_toplevel()==app.settings_window
@@ -806,6 +806,7 @@ def self_test():
     grid_probe=[{**samples[0],'id':91000000+n} for n in range(13)]
     grid_probe[0]['orderNumber']='00001234'
     app.board.set_groups(order_groups(grid_probe,timestamp,timestamp,{})); root.update_idletasks()
+    assert {app.board.canvas.itemcget(v,'outline') for v in app.board.canvas.find_withtag('carrier-border')}=={'#169b50'}
     assert len({round(value[0]) for value in app.board.hitboxes})==12
     assert len({round(value[1]) for value in app.board.hitboxes})==2
     assert '1234' in [app.board.canvas.itemcget(tag,'text') for tag in app.board.canvas.find_withtag('order-suffix')]

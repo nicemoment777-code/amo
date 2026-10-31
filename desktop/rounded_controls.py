@@ -72,7 +72,7 @@ class RoundedNotebook(ttk.Notebook):
             text=super().tab(tab,'text'); selected=index==active
             width=font.measure(text)+(52 if selected else 36)
             y=3 if selected else 18; height=60-y
-            active_color,inactive_color,inactive_ink='#199653',('#ad4c0b' if self.delivery and index==0 else '#142346'),'white'
+            active_color,inactive_color,inactive_ink='#199653',('#ad4c0b' if self.delivery and text=='Яндекс доставка' else '#142346'),'white'
             rounded(self.header,x,y,width,height,13,fill=active_color if selected else inactive_color,outline='')
             self.header.create_text(x+width/2,y+height/2,text=text,font=('Segoe UI',13 if selected else 11,'bold'),fill='white' if selected else inactive_ink)
             self.boxes.append((x,y,x+width,60,index)); x+=width+8
