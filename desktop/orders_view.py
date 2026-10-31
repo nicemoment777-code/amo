@@ -73,7 +73,10 @@ class OrdersBoard(ttk.Frame):
         self.selection_mode=mode; self.selected=set(selected); self.draw()
     def draw(self):
         c=self.canvas; c.delete('all'); self.hitboxes=[]; self.selection_boxes=[]; self.error_boxes=[]; self.copy_boxes=[]
-        width=max(c.winfo_width(),1040); gap=6; left=8; columns=12
+        measured_width=c.winfo_width()
+        width=measured_width if measured_width>1 else 1040
+        gap=6; left=8; columns=12
+        if width<=2*left+columns*gap: return
         cardw=(width-2*left-(columns-1)*gap)/columns; cardh=174; y=10
         if not self.groups:
             c.create_text(width/2,110,text='Пока нет заказов',font=('Segoe UI',24,'bold'),fill=INK)
@@ -92,8 +95,10 @@ class OrdersBoard(ttk.Frame):
                 y+=58
             color,fg=group['colors']
             for item in group['items']:
-                col=index%columns; row=index//columns; x=left+col*(cardw+gap); top=y+row*(cardh+gap)
-                self.card(x,top,cardw,cardh,item,color,fg)
+                col=index%columns; row=index//columns
+                x=round(left+col*(cardw+gap)); right=round(left+col*(cardw+gap)+cardw)
+                top=y+row*(cardh+gap)
+                self.card(x,top,right-x,cardh,item,color,fg)
                 index+=1
         y+=((index+columns-1)//columns)*(cardh+gap)
         c.configure(scrollregion=(0,0,width,max(y,c.winfo_height())))
@@ -104,7 +109,10 @@ class OrdersBoard(ttk.Frame):
         c=self.canvas
         rounded(c,x,y+2,w,h,8,fill='#e5e9f2',outline='')
         border={'yandex':'#f3c400','cdek':'#169b50'}.get(delivery_service(item),'')
-        rounded(c,x,y,w,h,8,fill=color,outline=border,width=3 if border else 0,tags='carrier-border')
+        # Filled nested shapes keep an even inset at fractional Windows display scales.
+        rounded(c,x,y,w,h,8,fill=border or color,outline='',tags='carrier-border')
+        if border:
+            rounded(c,x+3,y+3,w-6,h-6,5,fill=color,outline='',tags='card-interior')
         secondary='#d6e5ff' if fg=='#ffffff' else '#45516b'
         cx=x+w-10; cy=y+10
         c.create_oval(cx-6,cy-6,cx+6,cy+6,fill='#00a854' if item['confirmed'] else '#ef2345',outline='white')

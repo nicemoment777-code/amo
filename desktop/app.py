@@ -806,9 +806,22 @@ def self_test():
     grid_probe=[{**samples[0],'id':91000000+n} for n in range(13)]
     grid_probe[0]['orderNumber']='00001234'
     app.board.set_groups(order_groups(grid_probe,timestamp,timestamp,{})); root.update_idletasks()
-    assert {app.board.canvas.itemcget(v,'outline') for v in app.board.canvas.find_withtag('carrier-border')}=={'#169b50'}
+    assert {app.board.canvas.itemcget(v,'fill') for v in app.board.canvas.find_withtag('carrier-border')}=={'#169b50'}
     assert len({round(value[0]) for value in app.board.hitboxes})==12
     assert len({round(value[1]) for value in app.board.hitboxes})==2
+    # All 12 columns stay inside the actual canvas; the border has equal insets.
+    for window_width in (1120,1211,1440):
+        root.geometry(f'{window_width}x1000'); root.update_idletasks(); app.board.draw()
+        c=app.board.canvas
+        outlines=c.find_withtag('carrier-border'); interiors=c.find_withtag('card-interior')
+        assert len(outlines)==len(interiors)==13
+        for outer,inner in zip(outlines,interiors):
+            a=c.coords(outer); b=c.coords(inner)
+            assert all(value==round(value) for value in a+b)
+            assert min(b[::2])-min(a[::2])==max(a[::2])-max(b[::2])==3
+            assert min(b[1::2])-min(a[1::2])==max(a[1::2])-max(b[1::2])==3
+            assert 0<=min(a[::2])<max(a[::2])<=c.winfo_width()-8
+
     assert '1234' in [app.board.canvas.itemcget(tag,'text') for tag in app.board.canvas.find_withtag('order-suffix')]
     app.board.set_groups(order_groups(samples,timestamp,timestamp,{}))
     root.update_idletasks()
