@@ -1,0 +1,26 @@
+name: Verify standalone web agent
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+      - name: Verify owner's web panel without printing
+        env:
+          SSHPASS: ${{ secrets.VPS_SSH_PASSWORD }}
+          VERIFY_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VERIFY_USER: ${{ secrets.VPS_SSH_USER }}
+          KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          printf '%s\n' "$KNOWN_HOSTS" > known_hosts
+          opts=(-o StrictHostKeyChecking=yes -o UserKnownHostsFile=known_hosts -o ConnectTimeout=20)
+          sshpass -e scp "${opts[@]}" ops/verify-web-agent.mjs "$VERIFY_USER@$VERIFY_HOST:/root/verify-web-agent.mjs"
+          sshpass -e ssh "${opts[@]}" "$VERIFY_USER@$VERIFY_HOST" 'node /root/verify-web-agent.mjs'

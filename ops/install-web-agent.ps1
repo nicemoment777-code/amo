@@ -40,7 +40,7 @@ try {
   $taskSettings = Get-Content -LiteralPath $taskSettingsPath -Raw | ConvertFrom-Json -AsHashtable
   $taskSettings['startup'] = $true
   [IO.File]::WriteAllText(($taskSettingsPath+'.web-agent.tmp'),($taskSettings | ConvertTo-Json -Depth 30),[Text.UTF8Encoding]::new($false))
-  [IO.File]::Replace(($taskSettingsPath+'.web-agent.tmp'),$taskSettingsPath,$null)
+  [IO.File]::Move(($taskSettingsPath+'.web-agent.tmp'),$taskSettingsPath,$true)
   $taskExe = Join-Path $taskDest 'SnowbrickPrinter.exe'
   $taskArguments = '--background-agent --profile-home "'+$taskHome+'" --printing-data "'+$taskData+'"'
   $taskStartup = '"'+$taskExe+'" '+$taskArguments
