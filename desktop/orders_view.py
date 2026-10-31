@@ -112,7 +112,7 @@ class OrdersBoard(ttk.Frame):
         # Filled nested shapes keep an even inset at fractional Windows display scales.
         rounded(c,x,y,w,h,8,fill=border or color,outline='',tags='carrier-border')
         if border:
-            rounded(c,x+3,y+3,w-6,h-6,5,fill=color,outline='',tags='card-interior')
+            rounded(c,x+4,y+4,w-8,h-8,4,fill=color,outline='',tags='card-interior')
         secondary='#d6e5ff' if fg=='#ffffff' else '#45516b'
         cx=x+w-10; cy=y+10
         c.create_oval(cx-6,cy-6,cx+6,cy+6,fill='#00a854' if item['confirmed'] else '#ef2345',outline='white')

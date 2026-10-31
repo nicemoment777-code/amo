@@ -818,8 +818,8 @@ def self_test():
         for outer,inner in zip(outlines,interiors):
             a=c.coords(outer); b=c.coords(inner)
             assert all(value==round(value) for value in a+b)
-            assert min(b[::2])-min(a[::2])==max(a[::2])-max(b[::2])==3
-            assert min(b[1::2])-min(a[1::2])==max(a[1::2])-max(b[1::2])==3
+            assert min(b[::2])-min(a[::2])==max(a[::2])-max(b[::2])==4
+            assert min(b[1::2])-min(a[1::2])==max(a[1::2])-max(b[1::2])==4
             assert 0<=min(a[::2])<max(a[::2])<=c.winfo_width()-8
 
     assert '1234' in [app.board.canvas.itemcget(tag,'text') for tag in app.board.canvas.find_withtag('order-suffix')]
