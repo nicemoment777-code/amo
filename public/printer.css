@@ -26,3 +26,5 @@
 .order .cardactions{background:#ffffffd9;color:#131936;border-radius:5px;padding:3px}.order .copy,.order .cardactions button{color:#131936}
 
 .order .skuline>span{flex:1;min-width:0;overflow-wrap:anywhere}
+
+.order .statusmark.pending{display:block;margin:5px 0;font-size:10px;line-height:15px;text-align:center;white-space:normal;background:#b51637;color:#fff;padding:3px 5px;border-radius:5px}

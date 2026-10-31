@@ -107,7 +107,9 @@ function render(){
       heading.append(node('div',digits,'digits'),print);card.append(heading,node('div',title(item),'number'));
       const sku=node('div',undefined,'skuline');sku.append(node('span',item.skus.join('; ')||'Без артикула'));
       if(item.skus.length){const copy=node('button',undefined,'copy');copy.innerHTML=copyIcon;copy.title='Скопировать полный артикул';copy.onclick=action(async e=>{e.stopPropagation();await navigator.clipboard.writeText(item.skus.join('; '));notice('Артикул скопирован.');});sku.append(copy);}card.append(sku);
-      const buttons=node('div',undefined,'cardactions');const mark=node('span',item.confirmed?'✓':'!',item.confirmed?'statusmark ok':'statusmark');mark.title=item.statusText;buttons.append(mark);
+      const buttons=node('div',undefined,'cardactions');
+      if(item.confirmed){const mark=node('span','✓','statusmark ok');mark.title=item.statusText;buttons.append(mark);}
+      else{const mark=node('span',/не.*подтвержден|нет подтверждения/i.test(item.statusText)?'Не подтверждено':'Не напечатано','statusmark pending');mark.title=item.statusText;card.append(mark);}
       const reason=node('button','Причина');reason.onclick=e=>{e.stopPropagation();$('reasons').replaceChildren(node('h3',title(item)),...item.reasons.map(t=>node('p',t)));$('reasonDialog').showModal();};buttons.append(reason);if(item.hasLabel){const pdf=node('a','PDF');pdf.href='/api/browser/label/'+item.id;pdf.download='label-'+item.id+'.pdf';pdf.onclick=e=>e.stopPropagation();buttons.append(pdf);}
       card.append(buttons);
       if(selection){card.tabIndex=0;card.setAttribute('role','checkbox');card.setAttribute('aria-checked',String(selected.has(String(item.id))));const toggle=()=>{if(!item.canPrint)return;const id=String(item.id);selected.has(id)?selected.delete(id):selected.add(id);render();};card.onclick=toggle;card.onkeydown=e=>{if(e.target===card&&[' ','Enter'].includes(e.key)){e.preventDefault();toggle();}};}

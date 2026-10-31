@@ -50,4 +50,7 @@ export function skuColors(skus) {
   return ['hsl('+hash%360+' 70% 80%)',ink];
 }
 
-export const orderColors = item => item.confirmed ? skuColors(item.skus) : ['#ff666d','#131936'];
+export const orderColors = item => {
+  const colors=skuColors(item.skus);
+  return item.confirmed || colors[0].startsWith('linear-gradient(') ? colors : ['#ff666d','#131936'];
+};

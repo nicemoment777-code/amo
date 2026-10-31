@@ -7,8 +7,9 @@ import {pathToFileURL} from 'node:url';
 import {createBrowserControl} from './browser-control.mjs';
 import {skuColors,orderColors} from './public/printer-model.js';
 
-test('unprinted cards are red; printed multi-colour SKU cards use a 45 degree gradient',()=>{
-  assert.deepEqual(orderColors({confirmed:false,skus:['product_lime_darkblue']}),['#ff666d','#131936']);
+test('multi-colour SKU cards use a gradient before and after printing; other pending cards remain red',()=>{
+  assert.deepEqual(orderColors({confirmed:false,skus:['product_lime_darkblue']}),['linear-gradient(45deg, #a3e635, #142346)','#131936']);
+  assert.deepEqual(orderColors({confirmed:false,skus:['product_green']}),['#ff666d','#131936']);
   assert.deepEqual(orderColors({confirmed:true,skus:['product_lime_darkblue']}),['linear-gradient(45deg, #a3e635, #142346)','#131936']);
   assert.equal(skuColors(['A_lime','B_navy','C_lime'])[0],'linear-gradient(45deg, #a3e635, #142346)');
   assert.equal(skuColors(['A_лаймовый_тёмно-синий'])[0],'linear-gradient(45deg, #a3e635, #142346)');
