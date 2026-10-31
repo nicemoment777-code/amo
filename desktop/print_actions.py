@@ -2,7 +2,6 @@
 import json
 import time
 import uuid
-import tempfile
 from print_order import grouped_print_order, group_key
 from print_journal import append_entry
 from orders_model import delivery_service
@@ -50,15 +49,6 @@ def _manual_print_locked(worker, item_id, expected_printer=None, expected_servic
             worker.atomic_json(worker.DATA/'history-sync-error.json',{'pending':True,'at':int(time.time())})
     return details
 
-def print_separator(worker,details,printer):
-    """Одна белая страница того же размера; без заявки, штрихкодов и состава."""
-    from PIL import Image
-    with tempfile.TemporaryDirectory(prefix='snowbrick-separator-') as folder:
-        from pathlib import Path
-        image=Path(folder)/'blank.png'
-        with Image.new('RGB',(8,8),'white') as blank: blank.save(image)
-        worker.print_label(image,details,printer)
-
 def manual_batch(worker, items, printers, on_submitted=None, separate_delivery=False, separate_articles=False):
     """One explicitly confirmed copy per selected order; stop on any failure."""
     with worker.agent_lock():
@@ -86,36 +76,23 @@ def _manual_batch_locked(worker, items, printers, on_submitted=None, separate_de
     if separate_delivery:
         # Сохраняем утверждённый порядок групп внутри каждой доставки.
         ordered=sorted(ordered,key=lambda item:{'cdek':0,'yandex':1}.get(delivery_service(item),2))
-        if len({printers[str(item['id'])] for item in ordered})>1:
-            raise ValueError('Разделённая партия артикула требует одного назначенного принтера.')
     path=worker.DATA/f'manual-batch-{uuid.uuid4().hex}.json'
     batch={'at':int(time.time()),'authorizedByOwner':True,'items':[{'id':v['id'],'status':'pending'} for v in ordered]}
     worker.atomic_json(path,batch)
-    submitted=[]; failed=None; previous_service=None; previous_details=None; previous_item=None
+    submitted=[]; failed=None
     for item,record in zip(ordered,batch['items']):
         key=str(item['id'])
         record['status']='working'; worker.atomic_json(path,batch)
         try:
             service=delivery_service(item)
-            if separate_articles and previous_item is not None and group_key(previous_item)!=group_key(item):
-                separator={'status':'submitting','printer':printers[str(previous_item['id'])],
-                           'afterId':previous_item['id'],'beforeId':item['id']}
-                batch.setdefault('separators',[]).append(separator); worker.atomic_json(path,batch)
-                print_separator(worker,previous_details,separator['printer'])
-                separator['status']='submitted'; worker.atomic_json(path,batch)
-            if separate_delivery and previous_service=='cdek' and service=='yandex':
-                batch['separator']={'status':'submitting','printer':printers[key]}; worker.atomic_json(path,batch)
-                print_separator(worker,previous_details,printers[key])
-                batch['separator']['status']='submitted'; worker.atomic_json(path,batch)
             if separate_articles:
-                details=_manual_print_locked(worker,item['id'],printers[key],service,group_key(item))
+                _manual_print_locked(worker,item['id'],printers[key],service,group_key(item))
             else:
-                details=_manual_print_locked(worker,item['id'],printers[key],service if separate_delivery else None)
+                _manual_print_locked(worker,item['id'],printers[key],service if separate_delivery else None)
         except Exception as error:
             record.update(status='failed',errorType=type(error).__name__)
             failed=key; worker.atomic_json(path,batch); break
         record['status']='submitted'; submitted.append(key); worker.atomic_json(path,batch)
-        previous_service=service; previous_details=details; previous_item=item
         if on_submitted: on_submitted(key)
     batch['status']='failed' if failed else 'submitted'; worker.atomic_json(path,batch)
     return {'submitted':submitted,'failed':failed,'remaining':[str(v['id']) for v in batch['items'] if v['status']=='pending']}

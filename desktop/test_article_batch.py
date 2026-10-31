@@ -1,4 +1,4 @@
-"""Whole carrier batches: preflight, unique SKU sets and separator failures."""
+"""Whole carrier batches: preflight, unique SKU sets and no blank labels."""
 import json
 from pathlib import Path
 import tempfile
@@ -10,7 +10,7 @@ from orders_model import order_groups, pending_by_article
 
 
 class ArticleBatchTests(unittest.TestCase):
-    def run_batch(self, fail_blank=False, invalid=False):
+    def run_batch(self, fail_order=None, invalid=False):
         with tempfile.TemporaryDirectory() as folder:
             worker=FakeWorker(folder); events=[]
             items=[{'id':i,'createdAt':i,'hasLabel':True,'composition':sku,'deliveryService':'yandex'}
@@ -22,13 +22,12 @@ class ArticleBatchTests(unittest.TestCase):
             worker.request=request
             def label(worker,key,printer,service,skus):
                 events.append(key)
+                if key==fail_order: raise RuntimeError('driver failed')
                 return {'widthMm':75,'heightMm':110}
-            def blank(worker,details,printer):
-                events.append(('blank',printer))
-                if fail_blank: raise RuntimeError('blank uncertain')
+            worker.print_label=lambda *_:self.fail('Unexpected extra label')
             printers={'1':'Test printer','2':'Other printer','3':'Test printer','4':'Test printer'}
             worker.select_printer=lambda v:printers[str(v['id'])]
-            with patch('print_actions._manual_print_locked',side_effect=label),patch('print_actions.print_separator',side_effect=blank):
+            with patch('print_actions._manual_print_locked',side_effect=label):
                 if invalid:
                     with self.assertRaises(ValueError): manual_batch(worker,items,printers,separate_articles=True)
                     self.assertEqual(events,[]); return
@@ -36,17 +35,17 @@ class ArticleBatchTests(unittest.TestCase):
             batch=json.loads(next(Path(folder).glob('manual-batch-*.json')).read_text())
             return events,result,batch
 
-    def test_groups_multi_sku_once_with_blanks_on_finished_group_printer(self):
+    def test_groups_print_consecutively_and_multi_sku_once(self):
         events,result,batch=self.run_batch()
-        self.assertEqual(events,[1,3,('blank','Test printer'),2,('blank','Other printer'),4])
+        self.assertEqual(events,[1,3,2,4])
         self.assertEqual(result['submitted'],['1','3','2','4'])
-        self.assertEqual(len(batch['separators']),2)
+        self.assertNotIn('separators',batch)
 
-    def test_uncertain_blank_stops_batch_without_following_order(self):
-        events,result,batch=self.run_batch(fail_blank=True)
-        self.assertEqual(events,[1,3,('blank','Test printer')])
+    def test_failed_order_stops_batch_without_following_order(self):
+        events,result,batch=self.run_batch(fail_order=2)
+        self.assertEqual(events,[1,3,2])
         self.assertEqual(result['failed'],'2')
-        self.assertEqual(batch['separators'][0]['status'],'submitting')
+        self.assertNotIn('separators',batch)
 
     def test_changed_last_item_prevents_entire_batch(self): self.run_batch(invalid=True)
 
