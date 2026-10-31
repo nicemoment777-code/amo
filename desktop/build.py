@@ -35,10 +35,14 @@ def build():
     args=[str(ROOT/'desktop'/'app.py'),'--name','SnowbrickPrinter','--onedir','--windowed','--noconfirm','--clean',
           '--distpath',str(ROOT/'dist'),'--workpath',str(ROOT/'build'), '--specpath',str(ROOT/'build'),
           '--paths',str(ROOT/'ops'),'--paths',str(ROOT/'data'/'printing'/'vendor'),
-          '--hidden-import','pypdf','--hidden-import','reportlab.pdfbase.ttfonts','--hidden-import','PIL.Image','--hidden-import','zxingcpp',
+          '--hidden-import','uuid','--hidden-import','pypdf','--hidden-import','reportlab.pdfbase.ttfonts','--hidden-import','PIL.Image','--hidden-import','zxingcpp',
           '--collect-all','reportlab','--collect-all','pypdf']
     for name in ['print-agent.py','label_pdf.py','print_order.py','printer_routing.py','auto_print.py','pdf_archive.py','print_journal.py','server_history.py','package_weight.py','print-image.ps1']:
         args+=['--add-data',str(ROOT/'ops'/name)+separator+'ops']
+    # This Python distribution loads its rejected-CA list from beside ssl.py.
+    # Preserve that TLS policy in the frozen app as well.
+    tls_policy=Path(sys.base_prefix)/'Lib'/'codex-rejected-cas.pem'
+    if tls_policy.exists(): args+=['--add-data',str(tls_policy)+separator+'.']
     for file in (RUNTIME/'native'/'poppler'/'Library'/'bin').iterdir():
         if file.suffix.lower()=='.dll' or file.name=='pdftoppm.exe':
             args+=['--add-binary',str(file)+separator+'poppler']

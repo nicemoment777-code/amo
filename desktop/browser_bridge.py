@@ -6,6 +6,8 @@ import socket
 import sys
 import threading
 import time
+import traceback
+from pathlib import Path
 from server_history import merge_history
 from orders_model import read_json, sku_set, sku_color, print_status, receipt_statuses
 from order_diagnostics import error_reasons
@@ -18,6 +20,16 @@ from print_order import group_key
 class BrowserBridge:
     def __init__(self, app):
         self.app=app; self.worker=app.worker; self.plans={}; self.view_from=None
+
+    def connection_error(self, error):
+        # Local diagnostics contain no request bodies, tokens, URLs or order fields.
+        try:
+            self.worker.atomic_json(self.worker.DATA/'browser-connection-error.json',
+                {'at':int(time.time()),'type':type(error).__name__,
+                 'module':getattr(error,'name',None),'status':getattr(error,'code',None),
+                 'file':Path(error.filename).name if isinstance(error,OSError) and error.filename else None,
+                 'frames':[{'file':Path(f.filename).name,'line':f.lineno,'function':f.name} for f in traceback.extract_tb(error.__traceback__)]})
+        except Exception: pass
 
     def ui(self, fn):
         event=threading.Event(); cancelled=threading.Event(); box={}
@@ -154,8 +166,8 @@ class BrowserBridge:
         while not self.app.closing.is_set():
             try:
                 self.worker.request('browser/snapshot',{'name':socket.gethostname(),'snapshot':self.snapshot()})
-            except Exception:
-                pass
+            except Exception as error:
+                self.connection_error(error)
             self.app.closing.wait(5)
 
     def run(self):
@@ -177,8 +189,8 @@ class BrowserBridge:
                     self.worker.atomic_json(outbox,pending)
                     self.worker.request('browser/result',pending)
                     outbox.unlink(missing_ok=True)
-            except Exception:
-                pass
+            except Exception as error:
+                self.connection_error(error)
             self.app.closing.wait(3)
 
     def start(self):

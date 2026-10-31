@@ -792,6 +792,8 @@ class App:
         self.closing.set(); self.stop_event.set(); self.root.destroy()
 
 def self_test():
+    import ssl
+    ssl.create_default_context()  # Frozen payload must include its TLS resources.
     assert protect(protect(b'test-only'),decrypt=True)==b'test-only'
     assert (BASE/'ops'/'print-image.ps1').is_file()
     assert Path(os.environ['SNOWBRICK_POPPLER']).is_file()
@@ -988,4 +990,7 @@ if __name__=='__main__':
             try:
                 if '--background-agent' in sys.argv and '--show-window' not in sys.argv: root.withdraw()
                 App(root); root.mainloop()
-            except Exception: root.withdraw(); messagebox.showerror(TITLE,'Не удалось открыть приложение. Проверьте права доступа и переустановите его.'); root.destroy()
+            except Exception as error:
+                # Record only the exception class and missing module, never order data or keys.
+                (HOME/'startup-error.json').write_text(json.dumps({'type':type(error).__name__,'module':getattr(error,'name',None)}),encoding='utf-8')
+                root.withdraw(); messagebox.showerror(TITLE,'Не удалось открыть приложение. Проверьте права доступа и переустановите его.'); root.destroy()
