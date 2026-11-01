@@ -24,6 +24,16 @@ export function orderedGroups(items) {
     .sort((a,b)=>b.length-a.length||a[0].createdAt-b[0].createdAt||a[0].id-b[0].id).flat();
 }
 
+export function printedGroups(items){
+  const groups=new Map();
+  for(const item of new Map(items.filter(v=>v.confirmed).map(v=>[String(v.id),v])).values()){
+    const skus=[...new Set(item.skus)].sort(),key=JSON.stringify(skus);
+    if(!groups.has(key))groups.set(key,{skus,items:[]});groups.get(key).items.push(item);
+  }
+  return [...groups.values()].sort((a,b)=>a.skus.join('; ').localeCompare(b.skus.join('; '),'ru'))
+    .map(group=>({...group,items:group.items.sort((a,b)=>b.createdAt-a.createdAt||b.id-a.id)}));
+}
+
 export function skuColors(skus) {
   const text=skus.join('; ').toLowerCase(),ink='#131936';
   if(!skus.length)return ['#e4e8ef',ink];

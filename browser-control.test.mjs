@@ -5,7 +5,13 @@ import {mkdtemp,rm,mkdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {pathToFileURL} from 'node:url';
 import {createBrowserControl} from './browser-control.mjs';
-import {skuColors,orderColors,formatCreatedAt} from './public/printer-model.js';
+import {skuColors,orderColors,formatCreatedAt,printedGroups} from './public/printer-model.js';
+
+test('printed archive groups by full SKU set, excludes pending and never duplicates multi-SKU orders',()=>{
+  const items=[{id:1,skus:['B','A'],confirmed:true,createdAt:1},{id:2,skus:['A','B'],confirmed:true,createdAt:3},{id:3,skus:['A'],confirmed:false,createdAt:2}];
+  const groups=printedGroups([...items,items[0]]);assert.equal(groups.length,1);
+  assert.deepEqual(groups[0].skus,['A','B']);assert.deepEqual(groups[0].items.map(v=>v.id),[2,1]);
+});
 
 test('card creation dates use Moscow time, including a UTC date boundary',()=>{
   assert.equal(formatCreatedAt(Date.parse('2026-10-31T22:45:00Z')/1000),'01.11.2026, 01:45');
