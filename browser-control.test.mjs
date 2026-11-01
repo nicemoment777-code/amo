@@ -5,7 +5,12 @@ import {mkdtemp,rm,mkdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {pathToFileURL} from 'node:url';
 import {createBrowserControl} from './browser-control.mjs';
-import {skuColors,orderColors} from './public/printer-model.js';
+import {skuColors,orderColors,formatCreatedAt} from './public/printer-model.js';
+
+test('card creation dates use Moscow time, including a UTC date boundary',()=>{
+  assert.equal(formatCreatedAt(Date.parse('2026-10-31T22:45:00Z')/1000),'01.11.2026, 01:45');
+  assert.equal(formatCreatedAt(0),'дата не указана');assert.equal(formatCreatedAt(undefined),'дата не указана');
+});
 
 test('multi-colour SKU cards use a gradient before and after printing; other pending cards remain red',()=>{
   assert.deepEqual(orderColors({confirmed:false,skus:['product_lime_darkblue']}),['linear-gradient(45deg, #a3e635, #142346)','#131936']);

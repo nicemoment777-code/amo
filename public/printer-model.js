@@ -1,6 +1,7 @@
 export const day = seconds => new Date(seconds*1000).toLocaleDateString('sv-SE',{timeZone:'Europe/Moscow'});
 export const stamp = (date,time='00:00') => Date.parse(`${date}T${time}:00+03:00`)/1000;
 export const title = item => item.orderNumber ? `№ ${item.orderNumber}` : `amo ${item.id}`;
+export const formatCreatedAt = seconds => Number.isFinite(seconds)&&seconds>0 ? new Intl.DateTimeFormat('ru-RU',{timeZone:'Europe/Moscow',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(seconds*1000)) : 'дата не указана';
 export function filterItems(items,{from,to,query='',carrier='all',skus=null,status='all'}) {
   return items.filter(v=>v.createdAt>=from && v.createdAt<=to && (carrier==='all'||v.deliveryService===carrier)
     && (!query||String(v.id).includes(query)||String(v.orderNumber||'').includes(query))

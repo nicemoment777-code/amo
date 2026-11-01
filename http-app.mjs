@@ -28,6 +28,7 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
       const path = new URL(req.url, 'http://localhost').pathname;
       async function sendLabel(id) {
           const result = await amocrm.printLabel(id);
+          if (!result.url) return json(409,{error:'В заявке нет ссылки на PDF этикетки. Заполните поле этикетки в amoCRM и обновите карточки.'});
           const url = new URL(result.url);
           if (url.protocol !== 'https:' || url.port || url.username || url.password || !labelHosts.includes(url.hostname)) return json(400, {error: 'Домен этикетки ещё не разрешён для печати'});
           const response = await fetch(url, {redirect: 'error', signal: AbortSignal.timeout(30000)});

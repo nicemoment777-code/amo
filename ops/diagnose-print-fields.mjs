@@ -12,7 +12,11 @@ const shipping=fields.filter(f=>/^(delivery|служба доставки|спо
 const box=/boxberry|боксбер[ри]/i;
 const cdekLabel=value('этикетка шк сдэк'),boxberryLabel=value('этикетка boxberry');
 const validLink=value=>{try{return new URL(value).protocol==='https:';}catch{return false;}};
+const labelFields=fields.filter(f=>/этикет|ярлык|накладн|label/i.test(f.field_name||''));
 console.log(JSON.stringify({shippingCdek:/сдэк|cdek|sdek/i.test(shipping),shippingYandex:/яндекс|yandex/i.test(shipping),shippingBoxberry:box.test(shipping),
   cdekLabel:validLink(cdekLabel),boxberryLabel:validLink(boxberryLabel),yandexLabel:fields.some(f=>/яндекс|yandex/i.test(f.field_name||'')&&/этикет|ярлык|штрихкод|\bшк\b/i.test(f.field_name||'')&&validLink(text(f))),
   boxberryInTitle:box.test(lead.name||''),boxberryInTags:box.test((lead._embedded?.tags||[]).map(v=>v.name).join('\n')),
-  boxberryInOtherFields:fields.some(f=>box.test(text(f))&&!/^(delivery|служба доставки|способ доставки|тип доставки|доставка|этикетка boxberry)$/i.test(f.field_name?.trim()||''))}));
+  boxberryInOtherFields:fields.some(f=>box.test(text(f))&&!/^(delivery|служба доставки|способ доставки|тип доставки|доставка|этикетка boxberry)$/i.test(f.field_name?.trim()||'')),
+  labelFieldsWithText:labelFields.filter(f=>text(f)).length,
+  labelFieldsWithNonStringValues:labelFields.filter(f=>(f.values||[]).some(v=>v.value!==null&&v.value!==''&&typeof v.value!=='string')).length,
+  otherLabelLinks:labelFields.filter(f=>!/^этикетка (boxberry|шк сдэк)$/i.test(f.field_name?.trim()||'')&&validLink(text(f))).length}));

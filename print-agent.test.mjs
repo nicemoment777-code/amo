@@ -4,6 +4,18 @@ import {once} from 'node:events';
 import {createHash} from 'node:crypto';
 import {createApp} from './http-app.mjs';
 
+test('missing CRM label returns an actionable data error for owner and device instead of a gateway error',async t=>{
+  const token='m'.repeat(43),printAgentHash=createHash('sha256').update(token).digest('hex');
+  const server=createApp({auth:{enabled:true,origin:'https://example.test',session:()=>({username:'owner'})},browserControl:{},printAgentHash,
+    amocrm:{printLabel:async()=>({item:{hasLabel:false,deliveryService:'yandex'},url:''})}});
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  t.after(()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections();}));
+  for(const path of ['/api/print-agent/label/123','/api/browser/label/123']){
+    const response=await fetch(`http://127.0.0.1:${server.address().port}${path}`,{headers:{Authorization:'Bearer '+token}});
+    assert.equal(response.status,409);assert.match((await response.json()).error,/нет ссылки на PDF/);
+  }
+});
+
 test('print agent token grants only read access to print routes and fails closed', async t => {
   const token = 'a'.repeat(43), printAgentHash = createHash('sha256').update(token).digest('hex');
   const auth = {enabled: true, origin: 'https://example.test', session: () => null};

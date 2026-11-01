@@ -30,3 +30,5 @@
 .order .statusmark.pending{display:block;margin:5px 0;font-size:10px;line-height:15px;text-align:center;white-space:normal;background:#b51637;color:#fff;padding:3px 5px;border-radius:5px}
 
 .bulk-actions{display:flex;flex-direction:column;gap:7px;min-width:210px}.bulk-actions button{width:100%}.yellow{background:#ffdb45;color:#131936}.order.unprinted-overview,.order.selected.unprinted-overview{border-color:#ff0000}
+
+.order .digits{font-size:25px}.order .created{display:block;font-size:10px;line-height:1.35;margin:4px 0;padding:3px 4px;border-radius:5px;background:#ffffffd9;color:#131936;overflow-wrap:anywhere}

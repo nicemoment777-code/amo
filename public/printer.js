@@ -1,4 +1,4 @@
-import {day,stamp,title,filterItems,articleCounts,orderedGroups,skuColors,orderColors} from '/printer-model.js';
+import {day,stamp,title,formatCreatedAt,filterItems,articleCounts,orderedGroups,skuColors,orderColors} from '/printer-model.js';
 const $=id=>document.getElementById(id);
 const printerIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 9V3h12v6M6 17H3V9h18v8h-3M6 14h12v7H6z"/><path d="M17 11h2"/></svg>';
 const copyIcon='<svg viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 6V2h12v16h-3M2 6h12v16H2z"/></svg>';
@@ -120,6 +120,9 @@ function render(){
       const heading=node('div',undefined,'cardheading');
       const print=node('button',undefined,'printicon');print.innerHTML=printerIcon;print.title='Печатать одну этикетку';print.setAttribute('aria-label','Печатать этикетку '+title(item));print.disabled=!item.canPrint||busy;print.dataset.unready=String(!item.canPrint);print.onclick=action(async e=>{e.stopPropagation();await preparePrint([item],'selected',title(item));});
       heading.append(node('div',digits,'digits'),print);card.append(heading,node('div',title(item),'number'));
+      const created=node('time','Создана: '+formatCreatedAt(item.createdAt)+(item.createdAt>0?' МСК':''),'created');
+      if(Number.isFinite(item.createdAt)&&item.createdAt>0)created.dateTime=new Date(item.createdAt*1000).toISOString();
+      created.title='Дата и время появления заявки';card.append(created);
       const sku=node('div',undefined,'skuline');sku.append(node('span',item.skus.join('; ')||'Без артикула'));
       if(item.skus.length){const copy=node('button',undefined,'copy');copy.innerHTML=copyIcon;copy.title='Скопировать полный артикул';copy.onclick=action(async e=>{e.stopPropagation();await navigator.clipboard.writeText(item.skus.join('; '));notice('Артикул скопирован.');});sku.append(copy);}card.append(sku);
       const buttons=node('div',undefined,'cardactions');
