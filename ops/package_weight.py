@@ -14,7 +14,7 @@ def kilograms(value,default_unit=None):
     return format(number.normalize(),'f').replace('.',',')+' кг'
 
 
-def label_weight(text):
+def label_weight(text, delivery_service=None):
     # Explicit total takes precedence; distinct parcel weights are never summed.
     total=r'(?:итоговый|общий)\s+вес'
     for prefix in (total,r'(?<![а-я])вес'):
@@ -25,4 +25,13 @@ def label_weight(text):
         if values:
             if len(values)!=1: raise ValueError('В этикетке несколько разных значений веса')
             return values.pop()
+    # Yandex labels put the parcel weight on a separate line, e.g. "2.6 кг",
+    # without a "Вес" heading. Accept exactly one explicit mass, never sum parcels.
+    if delivery_service=='yandex':
+        quantities=re.findall(r'(?<![\w.,-])(\d+(?:[.,]\d+)?)\s*(кг|kg|г|g)\b',text,re.I)
+        standalone=[re.fullmatch(r'\s*(\d+(?:[.,]\d+)?)\s*(кг|kg|г|g)\s*',line,re.I) for line in text.splitlines()]
+        standalone=[match for match in standalone if match]
+        if len(quantities)==1 and len(standalone)==1:
+            return kilograms(standalone[0][1],standalone[0][2])
+        if quantities: raise ValueError('В этикетке не удалось однозначно определить итоговый вес посылки')
     raise ValueError('В заявке и исходной этикетке не найден итоговый вес посылки')

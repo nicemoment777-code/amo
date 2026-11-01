@@ -27,13 +27,16 @@ async function command(action,args={}){
 function action(fn){return async event=>{try{await fn(event);}catch(e){notice(e.message,true);}};}
 function currentPeriod(){return range||{from:stamp($('historyStart').value),to:253402289999};}
 function paint(el,colors){el.style.background=colors?.[0]||'#e4e8ef';el.style.color=colors?.[1]||'#111936';el.classList.toggle('multicolor',!!colors?.[0]?.startsWith('linear-gradient('));}
+function serviceBatch(service){return filterItems(snapshot?.items||[],{...currentPeriod(),query,skus:skuFilter,status,carrier:service});}
 function renderDisabled(){
   const available=online()&&verified&&!snapshot?.busy;
   for(const id of ['autoPrint','refreshArticles','printSelected','saveRoutes','archive','openArchive','startup','refreshPrinters'])$(id).disabled=busy||!available;
   $('refresh').disabled=busy;$('applyStart').disabled=busy;
-  const ready=visible.filter(v=>v.canPrint).length;
-  const reason=!online()?'Компьютер печати не на связи':busy||snapshot?.busy?'На компьютере выполняется другое действие':!verified?'Проверяем связь и историю печати':!ready?'В текущем списке нет готовых этикеток':'';
-  $('printAll').disabled=!!reason;$('printAll').title=reason||`Печатать готовые этикетки текущего списка: ${ready}`;
+  const unavailable=!online()?'Компьютер печати не на связи':busy||snapshot?.busy?'На компьютере выполняется другое действие':!verified?'Проверяем связь и историю печати':'';
+  for(const [id,items] of [['printAll',visible],['printAllCdek',serviceBatch('cdek')],['printAllYandex',serviceBatch('yandex')]]){
+    const ready=items.filter(v=>v.canPrint).length,reason=unavailable||(!ready?'В текущем списке нет готовых этикеток':'');
+    $(id).disabled=!!reason;$(id).title=reason||`Печатать готовые этикетки с текущими фильтрами: ${ready}`;
+  }
   for(const b of document.querySelectorAll('.printicon'))b.disabled=busy||!available||b.dataset.unready==='true';
 }
 async function refresh(force=false){
@@ -112,7 +115,7 @@ function render(){
     orders.append(node('h3',d.split('-').reverse().join('.')+` · ${items.length} заявок`,'daytitle'));
     const grid=node('div',undefined,'ordergrid');
     for(const item of items.sort((a,b)=>a.colors[0].localeCompare(b.colors[0])||a.createdAt-b.createdAt||a.id-b.id)){
-      const card=node('article',undefined,'order '+item.deliveryService+(selected.has(String(item.id))?' selected':''));paint(card,orderColors(item));
+      const card=node('article',undefined,'order '+item.deliveryService+(selected.has(String(item.id))?' selected':'')+(carrier==='all'&&!item.confirmed?' unprinted-overview':''));paint(card,orderColors(item));
       card.title=title(item);const digits=String(item.orderNumber||item.id).replace(/\D/g,'').slice(-4);
       const heading=node('div',undefined,'cardheading');
       const print=node('button',undefined,'printicon');print.innerHTML=printerIcon;print.title='Печатать одну этикетку';print.setAttribute('aria-label','Печатать этикетку '+title(item));print.disabled=!item.canPrint||busy;print.dataset.unready=String(!item.canPrint);print.onclick=action(async e=>{e.stopPropagation();await preparePrint([item],'selected',title(item));});
@@ -184,6 +187,8 @@ $('searchForm').onsubmit=e=>{e.preventDefault();query=$('search').value.trim();c
 $('device').onchange=action(async()=>{if(busy)throw Error('Дождитесь завершения действия');device=$('device').value;localStorage.setItem('snowbrick-device',device);snapshot=null;$('orders').replaceChildren();await refresh();});
 $('refresh').onclick=action(async()=>{if(online())await command('refresh');await refresh(true);});$('refreshArticles').onclick=action(()=>command('articles'));
 $('printAll').onclick=action(()=>preparePrint(visible,carrier==='all'?'selected':'carrier',`${carrier==='all'?'Все доставки':carrier==='yandex'?'Яндекс доставка':'СДЭК доставка'} · текущий список заявок`));
+$('printAllCdek').onclick=action(()=>preparePrint(serviceBatch('cdek'),'carrier','СДЭК доставка · текущие фильтры'));
+$('printAllYandex').onclick=action(()=>preparePrint(serviceBatch('yandex'),'carrier','Яндекс доставка · текущие фильтры'));
 $('printSelected').onclick=action(()=>preparePrint(visible.filter(v=>selected.has(String(v.id))),'selected','Выбранные заявки'));
 $('confirmPrint').onclick=action(async()=>{const token=plan;plan=null;$('confirmDialog').close();if(!token)return;const result=await command('print',{plan:token});notice(`Отправлено этикеток: ${result.submitted}.`+(result.failed?' Партия остановлена. Проверьте очередь и журнал, автоматического повтора нет.':''),result.failed);selected.clear();render();});
 $('autoPrint').onchange=action(async()=>{const enabled=$('autoPrint').checked;$('autoPrint').checked=!!snapshot?.autoPrint;if(!confirm(`${enabled?'Включить':'Выключить'} автоматическую печать на компьютере «${devices.find(v=>v.id===device)?.name}»?${enabled?' Будут печататься только заявки, созданные после этого включения. Прежние заявки автоматически не печатаются.':''}`))return;await command('auto',{enabled});});

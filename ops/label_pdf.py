@@ -47,7 +47,10 @@ def prepare_label(source, target, composition, delivery_service=None, package_we
     if len(reader.pages) != 1:
         raise ValueError('Автоматическая печать поддерживает только одностраничные этикетки')
     page = reader.pages[0]
-    weight=kilograms(package_weight,'кг') if package_weight is not None else label_weight(page.extract_text())
+    try:
+        weight=kilograms(package_weight,'кг') if package_weight is not None else label_weight(page.extract_text() or '',delivery_service=delivery_service)
+    except (ValueError,TypeError,NotImplementedError):
+        weight=None
     page.transfer_rotation_to_content()
     header_width, header_height = 70 * MM, 15 * MM
     width = float(page.mediabox.width)
@@ -65,14 +68,19 @@ def prepare_label(source, target, composition, delivery_service=None, package_we
         raise ValueError('Недостаточный размер бумаги')
     x = (width - header_width) / 2
     available_width = header_width - 2 * MM
-    markup=escape(composition)+'  <b>'+escape(weight)+'</b>'
-    for size in [20,18,16,14,12]:
-        paragraph=Paragraph(markup,ParagraphStyle('header',fontName=font,fontSize=size,
-            leading=size*1.15,wordWrap='CJK',spaceBefore=0,spaceAfter=0))
-        _,text_height=paragraph.wrap(available_width,header_height)
-        if text_height<=header_height-2*MM: break
-    else:
-        raise ValueError('Артикулы и вес не помещаются в 70 × 15 мм при шрифте 12 pt')
+    fitted=False
+    for include_weight in ([True,False] if weight else [False]):
+        markup=escape(composition)+('  <b>'+escape(weight)+'</b>' if include_weight else '')
+        for size in [20,18,16,14,12]:
+            paragraph=Paragraph(markup,ParagraphStyle('header',fontName=font,fontSize=size,
+                leading=size*1.15,wordWrap='CJK',spaceBefore=0,spaceAfter=0))
+            _,text_height=paragraph.wrap(available_width,header_height)
+            if text_height<=header_height-2*MM:
+                fitted=True;break
+        if fitted:
+            if not include_weight: weight=None
+            break
+    if not fitted: raise ValueError('Артикулы не помещаются в 70 × 15 мм при шрифте 12 pt')
     lines=round(text_height/(size*1.15))
     overlay = io.BytesIO()
     c = canvas.Canvas(overlay, pagesize=(width, height))
@@ -92,4 +100,4 @@ def prepare_label(source, target, composition, delivery_service=None, package_we
     Path(target).parent.mkdir(parents=True, exist_ok=True)
     with open(target, 'wb') as stream:
         writer.write(stream)
-    return {'widthMm':round(width_mm,4),'heightMm':round(height_mm,4),'headerMm':[70,15],'fontPt':size,'lines':lines,'sourceScaleX':scale,'sourceScaleY':scale,'layout':'top-band'}
+    return {'widthMm':round(width_mm,4),'heightMm':round(height_mm,4),'headerMm':[70,15],'fontPt':size,'lines':lines,'sourceScaleX':scale,'sourceScaleY':scale,'layout':'top-band','weightIncluded':bool(weight)}

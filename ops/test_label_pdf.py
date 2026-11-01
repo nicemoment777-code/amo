@@ -26,7 +26,28 @@ class LabelSizeTest(unittest.TestCase):
                 self.assertIn('2,5 кг',page.extract_text())
                 self.assertGreaterEqual(details['fontPt'],12)
                 self.assertTrue(any('Bold' in str(font.get_object().get('/BaseFont')) for font in page['/Resources']['/Font'].values()))
-                with self.assertRaises(ValueError): prepare_label(source,target,'(test-sku)',service)
+                details=prepare_label(source,target,'(test-sku)',service)
+                self.assertFalse(details['weightIncluded'])
+                self.assertIn('test-sku',PdfReader(target).pages[0].extract_text())
+
+    def test_unknown_or_ambiguous_weight_never_blocks_sku_header(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source,target=Path(folder)/'source.pdf',Path(folder)/'out.pdf'
+            writer=PdfWriter();writer.add_blank_page(width=75*MM,height=95*MM);writer.write(source)
+            for weight in [None,'unknown','-1 кг','2 кг; 3 кг']:
+                details=prepare_label(source,target,'(SKU_REQUIRED)','yandex',weight)
+                self.assertFalse(details['weightIncluded']);self.assertIn('SKU_REQUIRED',PdfReader(target).pages[0].extract_text())
+            with self.assertRaises(ValueError):prepare_label(source,target,'Товар без артикула','yandex')
+
+    def test_sku_takes_priority_when_weight_does_not_fit_in_the_header(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source,target=Path(folder)/'source.pdf',Path(folder)/'out.pdf'
+            writer=PdfWriter();writer.add_blank_page(width=75*MM,height=95*MM);writer.write(source)
+            sku='A'*42
+            details=prepare_label(source,target,'('+sku+')','yandex','10000 кг')
+            self.assertFalse(details['weightIncluded'])
+            self.assertIn(sku,''.join(PdfReader(target).pages[0].extract_text().split()))
+            self.assertGreaterEqual(details['fontPt'],12)
 
     def test_landscape_fits_width_below_header(self):
         with tempfile.TemporaryDirectory() as folder:
