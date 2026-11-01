@@ -46,6 +46,20 @@ try {
   $taskStartup = '"'+$taskExe+'" '+$taskArguments
   New-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Force | Out-Null
   New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'SnowbrickPrinter' -Value $taskStartup -PropertyType String -Force | Out-Null
+  $taskProfileKey='HKCU:\Software\SnowbrickPrinter'
+  New-Item -Path $taskProfileKey -Force | Out-Null
+  New-ItemProperty -Path $taskProfileKey -Name 'ProfileHome' -Value $taskHome -PropertyType String -Force | Out-Null
+  New-ItemProperty -Path $taskProfileKey -Name 'PrintingData' -Value $taskData -PropertyType String -Force | Out-Null
+  $taskShell=New-Object -ComObject WScript.Shell
+  $taskMenu=Join-Path ([Environment]::GetFolderPath('Programs')) 'Снегострой'
+  New-Item -ItemType Directory -Path $taskMenu -Force | Out-Null
+  foreach($taskLinkPath in @((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Снегострой — печать этикеток.lnk'),(Join-Path $taskMenu 'Печать СДЭК.lnk'))) {
+    $taskLink=$taskShell.CreateShortcut($taskLinkPath)
+    $taskLink.TargetPath=$taskExe
+    $taskLink.Arguments=$taskArguments+' --show-window'
+    $taskLink.WorkingDirectory=$taskDest
+    $taskLink.Save()
+  }
 } finally {
   try { $taskLock.Unlock(0,1) } catch {}
   $taskLock.Dispose()

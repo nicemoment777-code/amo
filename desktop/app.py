@@ -22,6 +22,7 @@ from tkinter import ttk, messagebox
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 import webbrowser
 import winreg
+from profile_paths import profile_paths
 
 for option,variable in [('--profile-home','SNOWBRICK_HOME'),('--printing-data','SNOWBRICK_DATA_DIR')]:
     if option in sys.argv:
@@ -30,11 +31,20 @@ for option,variable in [('--profile-home','SNOWBRICK_HOME'),('--printing-data','
 TITLE = 'Снегострой — печать этикеток'
 ORIGIN = 'https://snowbrick.ru'
 BASE = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent))
-HOME = Path(os.environ.get('SNOWBRICK_HOME', str(Path(os.environ['LOCALAPPDATA'])/'SnowbrickPrinter')))
+registered_profile={}
+try:
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER,r'Software\SnowbrickPrinter') as key:
+        for name in ('ProfileHome','PrintingData'):
+            try:
+                value,kind=winreg.QueryValueEx(key,name)
+                if kind==winreg.REG_SZ and value: registered_profile[name]=value
+            except OSError: pass
+except OSError: pass
+HOME,printing_data = profile_paths(os.environ,registered_profile)
 HOME.mkdir(parents=True, exist_ok=True)
 CONFIG = HOME/'settings.json'
 TOKEN = HOME/'device-key.bin'
-os.environ.setdefault('SNOWBRICK_DATA_DIR', str(HOME/'printing'))
+os.environ.setdefault('SNOWBRICK_DATA_DIR', str(printing_data))
 runtime = Path(os.environ['USERPROFILE'])/'.cache/codex-runtimes/codex-primary-runtime/dependencies'
 os.environ.setdefault('SNOWBRICK_POPPLER', str(BASE/'poppler'/'pdftoppm.exe' if getattr(sys,'frozen',False) else runtime/'native/poppler/Library/bin/pdftoppm.exe'))
 os.environ.setdefault('SNOWBRICK_PRINT_SCRIPT', str(BASE/'ops'/'print-image.ps1'))

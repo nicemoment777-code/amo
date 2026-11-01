@@ -34,10 +34,13 @@ async function refresh(force=false){
   if(!devices.some(v=>v.id===device))device=devices.find(v=>v.online)?.id||devices[0]?.id||'';
   const selector=$('device');selector.replaceChildren();
   for(const v of devices){const o=node('option',v.name+(v.online?' · на связи':' · не на связи'));o.value=v.id;selector.append(o);}selector.value=device;
-  $('onboarding').hidden=online();
-  $('deviceState').textContent=online()?'Модуль печати работает самостоятельно':'Просмотр на сервере · модуль печати не на связи';
   let local=null;
   if(online())try{local=await api('snapshot?device='+encodeURIComponent(device));}catch{devices=devices.map(v=>v.id===device?{...v,online:false}:v);}
+  const computer=devices.find(v=>v.id===device);
+  $('onboarding').hidden=!!local;$('install').hidden=!!local;
+  $('deviceState').textContent=local?`Подключено принтеров: ${local.printers.length}`:'Компьютер печати не на связи';
+  $('onboardingTitle').textContent=computer?'Запустите модуль на компьютере печати':'Подключите компьютер с принтерами';
+  $('onboardingText').textContent=computer?`Нет связи с компьютером «${computer.name}». Запустите уже установленный модуль на нём. Повторно вводить ключи amoCRM не требуется.`:'amoCRM уже подключена на сервере: ключи и IP вводить не нужно. Для принтеров нового компьютера один раз установите модуль Windows и подтвердите этот компьютер.';
   if(local&&hydratedDevice!==device){
     const date=local.historyStart?.split('.').reverse().join('-');if(/^\d{4}-\d{2}-\d{2}$/.test(date||''))$('historyStart').value=date;
     hydratedDevice=device;range=null;skuFilter=null;selected.clear();
@@ -47,6 +50,7 @@ async function refresh(force=false){
     cloud=await api('catalog?from='+Math.floor(from));cloudAt=Date.now();cloudFrom=from;
   }
   const history=await api('history');verified=true;
+  $('crmState').textContent='amoCRM подключена на сервере';
   const items=new Map((cloud?.items||[]).map(v=>[String(v.id),v]));
   for(const v of local?.items||[]){
     const fresh=items.get(String(v.id));if(!fresh)continue;
@@ -130,6 +134,7 @@ async function preparePrint(items,mode,context){
 }
 function fillSettings(){
   if(!snapshot)return;
+  $('printerSource').textContent=online()?`Принтеры компьютера «${devices.find(v=>v.id===device)?.name}»: ${snapshot.printers.length}. Подключение amoCRM уже настроено на сервере.`:'Компьютер печати не на связи. Список принтеров появится после запуска его модуля.';
   routesDraft=structuredClone(snapshot.routes.slots||snapshot.routes.routes||[]);while(routesDraft.length<4)routesDraft.push({printer:'',skus:[]});
   const select=$('defaultPrinter');select.replaceChildren();for(const name of snapshot.printers){const o=node('option',name);o.value=name;select.append(o);}select.value=snapshot.printer;
   for(const [id,service] of [['deliveryYandex','yandex'],['deliveryCdek','cdek']]){

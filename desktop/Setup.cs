@@ -51,7 +51,16 @@ class Setup {
         }
       }
       if (extractOnly) return;
-      Provision(testInstall ? Path.Combine(dest,"test-profile") : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"SnowbrickPrinter"));
+      string settingsHome=testInstall ? Path.Combine(dest,"test-profile") : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"SnowbrickPrinter");
+      string printingData=Path.Combine(settingsHome,"printing");
+      if (!testInstall) using (var profile=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\SnowbrickPrinter")) {
+        if (profile!=null) {
+          settingsHome=profile.GetValue("ProfileHome") as string ?? settingsHome;
+          printingData=profile.GetValue("PrintingData") as string ?? Path.Combine(settingsHome,"printing");
+        }
+      }
+      Provision(settingsHome);
+      string profileArgs=" --profile-home \""+settingsHome+"\" --printing-data \""+printingData+"\"";
       string exe = Path.Combine(dest, "SnowbrickPrinter.exe");
       string menu = testInstall ? Path.Combine(dest,"test-shortcuts","StartMenu") : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Снегострой");
       string desktop = testInstall ? Path.Combine(dest,"test-shortcuts","Desktop") : Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
@@ -59,22 +68,24 @@ class Setup {
       Directory.CreateDirectory(desktop);
       Type type = Type.GetTypeFromProgID("WScript.Shell"); dynamic shell = Activator.CreateInstance(type);
       dynamic shortcut = shell.CreateShortcut(Path.Combine(menu, "Печать СДЭК.lnk"));
-      shortcut.TargetPath = exe; shortcut.WorkingDirectory = dest; shortcut.Save();
+      shortcut.TargetPath = exe; shortcut.Arguments=profileArgs; shortcut.WorkingDirectory = dest; shortcut.Save();
       dynamic desktopShortcut = shell.CreateShortcut(Path.Combine(desktop, "Снегострой — печать этикеток.lnk"));
-      desktopShortcut.TargetPath = exe; desktopShortcut.WorkingDirectory = dest; desktopShortcut.Description = "Заказы amoCRM и печать этикеток"; desktopShortcut.Save();
+      desktopShortcut.TargetPath = exe; desktopShortcut.Arguments=profileArgs; desktopShortcut.WorkingDirectory = dest; desktopShortcut.Description = "Заказы amoCRM и печать этикеток"; desktopShortcut.Save();
       File.WriteAllText(Path.Combine(dest,"Удаление.txt"), "Закройте приложение. Снимите автозапуск в приложении. Удалите эту папку, ярлык Снегострой с рабочего стола и из меню Пуск. История и ключ хранятся отдельно в %LOCALAPPDATA%\\SnowbrickPrinter. Доступ устройства можно отозвать на snowbrick.ru.");
       if (testInstall) return;
       using (var startup = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")) {
-        startup.SetValue("SnowbrickPrinter", "\""+exe+"\" --background-agent");
+        startup.SetValue("SnowbrickPrinter", "\""+exe+"\" --background-agent"+profileArgs);
       }
-      string settingsHome=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"SnowbrickPrinter");
+      using (var profile=Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\SnowbrickPrinter")) {
+        profile.SetValue("ProfileHome",settingsHome);profile.SetValue("PrintingData",printingData);
+      }
       Directory.CreateDirectory(settingsHome);
       string configPath=Path.Combine(settingsHome,"settings.json");
       var serializer=new JavaScriptSerializer();
       var config=File.Exists(configPath)?serializer.Deserialize<Dictionary<string,object>>(File.ReadAllText(configPath)):new Dictionary<string,object>();
       config["startup"]=true;File.WriteAllText(configPath,serializer.Serialize(config),new UTF8Encoding(false));
 
-      if (MessageBox.Show("Установка завершена. Открыть приложение?", "Снегострой", MessageBoxButtons.YesNo) == DialogResult.Yes) Process.Start(exe);
+      if (MessageBox.Show("Установка завершена. Открыть приложение?", "Снегострой", MessageBoxButtons.YesNo) == DialogResult.Yes) Process.Start(exe,profileArgs);
     } catch (Exception e) { if (check) Environment.Exit(1); else MessageBox.Show(e.Message,"Не удалось установить",MessageBoxButtons.OK,MessageBoxIcon.Error); }
   }
 }
