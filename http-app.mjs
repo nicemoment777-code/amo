@@ -147,8 +147,8 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
           const history=printDevices.history();if(body.ids.some(id=>history.uncertain[String(id)]&&!history.printed[String(id)]))return json(409,{error:'В партии есть неопределённое задание. Проверьте предыдущую печать.'});
           preparingBrowser=true;
           try{
-            const items=[],contents=[];
-            for(const id of new Set(body.ids.map(String))){const result=await sendLabel(id,true);if(!result)return;items.push(result.item);contents.push(result.content);}
+            const items=[],contents=[];let totalBytes=0;
+            for(const id of new Set(body.ids.map(String))){const result=await sendLabel(id,true);if(!result)return;totalBytes+=result.content.length;if(totalBytes>100e6)throw Error('Слишком большая партия PDF. Выберите меньше заявок.');items.push(result.item);contents.push(result.content);}
             const pdf=await browserPdf(items,contents),token=randomBytes(24).toString('hex');
             for(const [key,batch] of browserBatches)if(batch.expires<Date.now())browserBatches.delete(key);
             browserBatches.set(token,{ids:items.map(v=>v.id),expires:Date.now()+1800000});
