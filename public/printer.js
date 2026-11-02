@@ -51,7 +51,7 @@ async function refresh(force=false){
   if(online())try{local=await api('snapshot?device='+encodeURIComponent(device));}catch{devices=devices.map(v=>v.id===device?{...v,online:false}:v);}
   const computer=devices.find(v=>v.id===device);
   $('onboarding').hidden=true;$('install').hidden=true;
-  $('deviceState').textContent=local?`Подключено принтеров: ${local.printers.length}`:'Просмотр через сервер · принтер не подключён';
+  $('deviceState').textContent=device==='browser'?'Принтер выбирается в окне печати PDF':local?`Подключено принтеров: ${local.printers.length}`:'Компьютер печати не на связи';
   $('onboardingTitle').textContent=computer?'Запустите модуль на компьютере печати':'Подключите компьютер с принтерами';
   $('onboardingText').textContent=computer?`Нет связи с компьютером «${computer.name}». Запустите уже установленный модуль на нём. Повторно вводить ключи amoCRM не требуется.`:'amoCRM уже подключена на сервере: ключи и IP вводить не нужно. Для принтеров нового компьютера один раз установите модуль Windows и подтвердите этот компьютер.';
   if(local&&hydratedDevice!==device){
@@ -177,8 +177,8 @@ async function openPrintedArchive(){
 async function preparePrint(items,mode,context){
   if(device==='browser'){
     const ready=orderedGroups(items.filter(v=>v.canPrint));if(!ready.length)throw Error('Нет готовых этикеток');
-    plan={browserIds:ready.map(v=>v.id)};
-    $('confirmation').replaceChildren(node('h3',context),node('p',`Подготовить ${ready.length} этикеток для печати через браузер? Выберите в окне печати масштаб 100%. После печати подтвердите результат отдельной кнопкой.`));
+    plan={browserIds:ready.map(v=>v.id)};const repeats=ready.filter(v=>v.confirmed).length;
+    $('confirmation').replaceChildren(node('h3',context),node('p',`Подготовить ${ready.length} этикеток для печати через браузер? Выберите в окне печати масштаб 100%. После печати подтвердите результат отдельной кнопкой.${repeats?' Уже напечатанных: '+repeats+'. Будут дополнительные экземпляры.':''}`));
     $('confirmDialog').showModal();return;
   }
   const ready=orderedGroups(items.filter(v=>v.canPrint));
