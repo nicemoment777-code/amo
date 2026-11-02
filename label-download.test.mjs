@@ -21,6 +21,7 @@ test('label DNS fallback preserves HTTPS hostname and returns PDF',async()=>{
 
 test('TLS errors never use DNS fallback',async()=>{
   let calls=0;
-  await assert.rejects(labelDownload(new URL('https://labels.example.test'),{fetcher:async()=>{calls++;throw Object.assign(Error('TLS'),{cause:{code:'CERT_HAS_EXPIRED'}});}}),/TLS/);
+  await assert.rejects(labelDownload(new URL('https://tls.example.test'),{fetcher:async()=>{calls++;throw Object.assign(Error('TLS'),{cause:{code:'CERT_HAS_EXPIRED'}});}}),/TLS/);
   assert.equal(calls,1);
 });
+
