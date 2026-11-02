@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {labelDownload} from './label-download.mjs';
 import {browserPdf} from './browser-pdf.mjs';
 import {randomBytes} from 'node:crypto';
 import {webCatalog} from './web-catalog.mjs';
@@ -33,7 +34,7 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
           if (!result.url) return json(409,{error:'В заявке нет ссылки на PDF этикетки. Заполните поле этикетки в amoCRM и обновите карточки.'});
           const url = new URL(result.url);
           if (url.protocol !== 'https:' || url.port || url.username || url.password || !labelHosts.includes(url.hostname)) return json(400, {error: 'Домен этикетки ещё не разрешён для печати'});
-          const response = await fetch(url, {redirect: 'error', signal: AbortSignal.timeout(30000)});
+          const response = await labelDownload(url);
           if (!response.ok) return json(502, {error: 'Не удалось получить этикетку'});
           const reader = response.body.getReader(); const chunks = []; let length = 0;
           try { while (true) { const {done, value} = await reader.read(); if (done) break; length += value.length; if (length > 10e6) throw new Error('Слишком большой файл этикетки'); chunks.push(value); } }
