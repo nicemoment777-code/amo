@@ -2,8 +2,9 @@ import {day,stamp,title,formatCreatedAt,filterItems,articleCounts,orderedGroups,
 const $=id=>document.getElementById(id);
 const printerIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 9V3h12v6M6 17H3V9h18v8h-3M6 14h12v7H6z"/><path d="M17 11h2"/></svg>';
 const copyIcon='<svg viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 6V2h12v16h-3M2 6h12v16H2z"/></svg>';
-let snapshot=null,devices=[],device=localStorage.getItem('snowbrick-device')||'',carrier='all',status='pending',query='',selected=new Set(),skuFilter=null,selection=false,range=null,busy=false,plan=null,hydratedDevice='',routesDraft=[];
+let snapshot=null,devices=[],device=localStorage.getItem('snowbrick-device')||'browser',carrier='all',status='pending',query='',selected=new Set(),skuFilter=null,selection=false,range=null,busy=false,plan=null,hydratedDevice='',routesDraft=[];
 let visible=[],deliveryItems=[],allPeriod=[],cloud=null,cloudAt=0,cloudFrom=null,verified=false;
+let archiveMode=false;
 let archiveCatalog=[],archiveLoaded=false,archiveLoading=false,archiveHistory={printed:{},uncertain:{}};
 const online=()=>devices.find(v=>v.id===device)?.online===true;
 function node(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;}
@@ -30,27 +31,27 @@ function currentPeriod(){return range||{from:stamp($('historyStart').value),to:2
 function paint(el,colors){el.style.background=colors?.[0]||'#e4e8ef';el.style.color=colors?.[1]||'#111936';el.classList.toggle('multicolor',!!colors?.[0]?.startsWith('linear-gradient('));}
 function serviceBatch(service){return filterItems(snapshot?.items||[],{...currentPeriod(),query,skus:skuFilter,status,carrier:service});}
 function renderDisabled(){
-  const available=online()&&verified&&!snapshot?.busy;
-  for(const id of ['autoPrint','refreshArticles','printSelected','saveRoutes','archive','openArchive','startup','refreshPrinters'])$(id).disabled=busy||!available;
-  $('refresh').disabled=busy;$('applyStart').disabled=busy;
-  const unavailable=!online()?'Компьютер печати не на связи':busy||snapshot?.busy?'На компьютере выполняется другое действие':!verified?'Проверяем связь и историю печати':'';
+  const available=online()&&verified&&!snapshot?.busy;const printAvailable=device==='browser'?verified:available;
+  for(const id of ['autoPrint','printSelected','saveRoutes','archive','openArchive','startup','refreshPrinters'])$(id).disabled=busy||!available;
+  $('refreshArticles').disabled=busy;$('refresh').disabled=busy;$('applyStart').disabled=busy;
+  const unavailable=device==='browser'?(busy?'Подготовка PDF…':''):!online()?'Компьютер печати не на связи':busy||snapshot?.busy?'На компьютере выполняется другое действие':!verified?'Проверяем связь и историю печати':'';
   for(const [id,items] of [['printAll',visible],['printAllCdek',serviceBatch('cdek')],['printAllYandex',serviceBatch('yandex')]]){
     const ready=items.filter(v=>v.canPrint).length,reason=unavailable||(!ready?'В текущем списке нет готовых этикеток':'');
     $(id).disabled=!!reason;$(id).title=reason||`Печатать готовые этикетки с текущими фильтрами: ${ready}`;
   }
-  for(const b of document.querySelectorAll('.printicon,.archive-group-print'))b.disabled=busy||!available||b.dataset.unready==='true';
+  for(const b of document.querySelectorAll('.printicon,.archive-group-print'))b.disabled=busy||!printAvailable||b.dataset.unready==='true';
 }
 async function refresh(force=false){
   verified=false;renderDisabled();
   const data=await api('devices');devices=data.devices;
-  if(!devices.some(v=>v.id===device))device=devices.find(v=>v.online)?.id||devices[0]?.id||'';
-  const selector=$('device');selector.replaceChildren();
+  if(device!=='browser'&&!devices.some(v=>v.id===device&&v.online))device='browser';
+  const selector=$('device');selector.replaceChildren();const browserOption=node('option','Этот браузер · без модуля');browserOption.value='browser';selector.append(browserOption);
   for(const v of devices){const o=node('option',v.name+(v.online?' · на связи':' · не на связи'));o.value=v.id;selector.append(o);}selector.value=device;
   let local=null;
   if(online())try{local=await api('snapshot?device='+encodeURIComponent(device));}catch{devices=devices.map(v=>v.id===device?{...v,online:false}:v);}
   const computer=devices.find(v=>v.id===device);
-  $('onboarding').hidden=!!local;$('install').hidden=!!local;
-  $('deviceState').textContent=local?`Подключено принтеров: ${local.printers.length}`:'Компьютер печати не на связи';
+  $('onboarding').hidden=true;$('install').hidden=true;
+  $('deviceState').textContent=local?`Подключено принтеров: ${local.printers.length}`:'Просмотр через сервер · принтер не подключён';
   $('onboardingTitle').textContent=computer?'Запустите модуль на компьютере печати':'Подключите компьютер с принтерами';
   $('onboardingText').textContent=computer?`Нет связи с компьютером «${computer.name}». Запустите уже установленный модуль на нём. Повторно вводить ключи amoCRM не требуется.`:'amoCRM уже подключена на сервере: ключи и IP вводить не нужно. Для принтеров нового компьютера один раз установите модуль Windows и подтвердите этот компьютер.';
   if(local&&hydratedDevice!==device){
@@ -68,12 +69,12 @@ async function refresh(force=false){
     const fresh=items.get(String(v.id));if(!fresh)continue;
     const uncertain=v.statusText==='Печать не подтверждена';
     items.set(String(v.id),{...v,...fresh,colors:JSON.stringify(v.skus)===JSON.stringify(fresh.skus)?v.colors:fresh.colors,
-      confirmed:uncertain?false:fresh.confirmed||v.confirmed,canPrint:fresh.canPrint&&v.canPrint,
+      confirmed:fresh.shipped|| (uncertain?false:fresh.confirmed||v.confirmed),canPrint:fresh.canPrint&&v.canPrint,
       statusText:uncertain?v.statusText:fresh.statusText,reasons:[...new Set([...fresh.reasons,...v.reasons])]});
   }
   for(const [id,v] of items){
     const uncertain=v.statusText==='Печать не подтверждена';
-    if(history.printed[id]&&!uncertain){v.confirmed=true;v.statusText='Передано драйверу';}
+    if(history.printed[id]&&(!uncertain||['crm-shipped','browser-confirmed'].includes(history.printed[id].status))){v.confirmed=true;v.statusText='Передано драйверу';}
     else if(history.uncertain[id]&&!history.printed[id]){v.confirmed=false;v.canPrint=false;v.statusText='Печать не подтверждена';}
   }
   const journal=[...(local?.journal||[])],known=new Set(journal.map(v=>[v.id,v.at,v.printer||''].join('|')));
@@ -90,9 +91,9 @@ async function refresh(force=false){
 
 function render(){
   if(!snapshot)return;
-  allPeriod=filterItems(snapshot.items,{...currentPeriod(),query});
+  allPeriod=filterItems(snapshot.items.filter(v=>archiveMode?v.confirmed:!v.confirmed),{...currentPeriod(),query});
   deliveryItems=allPeriod.filter(v=>carrier==='all'||v.deliveryService===carrier);
-  let articlesSource=carrier==='all'?deliveryItems.filter(v=>!v.confirmed):deliveryItems;
+  let articlesSource=deliveryItems;
   const available=new Set(articleCounts(articlesSource).map(v=>v[0]));
   if(skuFilter&&!Array.from(skuFilter).some(s=>available.has(s)))skuFilter=null;
   $('articles').replaceChildren();
@@ -149,7 +150,7 @@ function renderPrintedArchive(history=archiveHistory){
   for(const item of snapshot?.items||[])combined.set(String(item.id),item);
   const query=$('printedArchiveSearch').value.trim().toLowerCase();
   const items=[...combined.values()].map(item=>{
-    const id=String(item.id),uncertain=item.statusText==='Печать не подтверждена'||(history.uncertain?.[id]&&!history.printed?.[id]);
+    const id=String(item.id),uncertain=!history.printed?.[id]&&(item.statusText==='Печать не подтверждена'||!!history.uncertain?.[id]);
     return {...item,confirmed:!uncertain&&!!(item.confirmed||history.printed?.[id]),canPrint:item.canPrint&&!uncertain};
   }).filter(item=>!query||[item.orderNumber,item.id,...item.skus].some(value=>String(value||'').toLowerCase().includes(query)));
   const groups=printedGroups(items),orders=$('printedArchiveOrders');orders.replaceChildren();
@@ -166,18 +167,20 @@ function renderPrintedArchive(history=archiveHistory){
 }
 
 async function openPrintedArchive(){
-  if(archiveLoading)return;archiveLoading=true;archiveLoaded=false;
-  if(!$('printedArchiveDialog').open)$('printedArchiveDialog').showModal();
-  $('printedArchiveOrders').replaceChildren();$('printedArchiveSummary').textContent='Сверяем напечатанные заявки с amoCRM и серверным журналом…';
-  $('refreshPrintedArchive').disabled=true;
-  try{
-    await refresh(true);
-    const data=await api('catalog?from=0'),history=await api('history');
-    archiveCatalog=data.items;archiveLoaded=true;renderPrintedArchive(history);
-  }catch(error){$('printedArchiveSummary').textContent='Не удалось загрузить архив. '+error.message;throw error;}
-  finally{archiveLoading=false;$('refreshPrintedArchive').disabled=false;}
+  archiveMode=!archiveMode;status=archiveMode?'printed':'pending';
+  range=archiveMode?{from:0,to:253402289999}:null;skuFilter=null;selected.clear();
+  document.querySelector('h1').textContent=archiveMode?'Архив':'Заказы';
+  $('openPrintedArchive').textContent=archiveMode?'Вернуться к заявкам':'Архив';
+  $('statuses').hidden=archiveMode;
+  await refresh(true);
 }
 async function preparePrint(items,mode,context){
+  if(device==='browser'){
+    const ready=orderedGroups(items.filter(v=>v.canPrint));if(!ready.length)throw Error('Нет готовых этикеток');
+    plan={browserIds:ready.map(v=>v.id)};
+    $('confirmation').replaceChildren(node('h3',context),node('p',`Подготовить ${ready.length} этикеток для печати через браузер? Выберите в окне печати масштаб 100%. После печати подтвердите результат отдельной кнопкой.`));
+    $('confirmDialog').showModal();return;
+  }
   const ready=orderedGroups(items.filter(v=>v.canPrint));
   if(!ready.length)throw Error('Готовых этикеток нет. Проверьте причины на карточках.');
   const result=await command('plan',{ids:ready.map(v=>v.id),mode});plan=result.plan;
@@ -218,7 +221,7 @@ function renderJournal(){
 }
 const today=day(Date.now()/1000);$('from').value=today;$('to').value=today;
 for(const b of $('carriers').querySelectorAll('button'))b.onclick=()=>{carrier=b.dataset.carrier;skuFilter=null;selected.clear();render();};
-for(const b of $('statuses').querySelectorAll('button'))b.onclick=action(async()=>{status=b.dataset.status;render();await refresh(true);});
+for(const b of $('statuses').querySelectorAll('button'))b.onclick=action(async()=>{if(b.dataset.status==='printed'){await openPrintedArchive();return;}status=b.dataset.status;render();await refresh(true);});
 $('history').onclick=()=>{carrier='all';skuFilter=null;render();};
 $('selection').onclick=()=>{selection=!selection;render();};$('selectAll').onclick=()=>{for(const v of visible)if(v.canPrint)selected.add(String(v.id));render();};$('clearSelection').onclick=()=>{selected.clear();render();};
 $('resetArticles').onclick=()=>{skuFilter=null;render();};
@@ -229,14 +232,14 @@ $('applyStart').onclick=action(async()=>{if(!$('historyStart').value)throw Error
 $('historyStart').onchange=$('applyStart').onclick;
 $('searchForm').onsubmit=e=>{e.preventDefault();query=$('search').value.trim();carrier='all';skuFilter=null;range=null;render();};$('resetSearch').onclick=()=>{query='';$('search').value='';render();};
 $('device').onchange=action(async()=>{if(busy)throw Error('Дождитесь завершения действия');device=$('device').value;localStorage.setItem('snowbrick-device',device);snapshot=null;$('orders').replaceChildren();await refresh();});
-$('refresh').onclick=action(async()=>{if(online())await command('refresh');await refresh(true);});$('refreshArticles').onclick=action(()=>command('articles'));
+$('refresh').onclick=action(async()=>{if(online())await command('refresh');await refresh(true);});$('refreshArticles').onclick=action(async()=>{await refresh(true);});
 $('openPrintedArchive').onclick=action(openPrintedArchive);$('refreshPrintedArchive').onclick=action(openPrintedArchive);
 $('printedArchiveSearch').oninput=()=>renderPrintedArchive();
 $('printAll').onclick=action(()=>preparePrint(visible,carrier==='all'?'selected':'carrier',`${carrier==='all'?'Все доставки':carrier==='yandex'?'Яндекс доставка':'СДЭК доставка'} · текущий список заявок`));
 $('printAllCdek').onclick=action(()=>preparePrint(serviceBatch('cdek'),'carrier','СДЭК доставка · текущие фильтры'));
 $('printAllYandex').onclick=action(()=>preparePrint(serviceBatch('yandex'),'carrier','Яндекс доставка · текущие фильтры'));
 $('printSelected').onclick=action(()=>preparePrint(visible.filter(v=>selected.has(String(v.id))),'selected','Выбранные заявки'));
-$('confirmPrint').onclick=action(async()=>{const token=plan;plan=null;$('confirmDialog').close();if(!token)return;const result=await command('print',{plan:token});notice(`Отправлено этикеток: ${result.submitted}.`+(result.failed?' Партия остановлена. Проверьте очередь и журнал, автоматического повтора нет.':''),result.failed);selected.clear();render();});
+$('confirmPrint').onclick=action(async()=>{const token=plan;plan=null;$('confirmDialog').close();if(!token)return;if(token.browserIds){await prepareBrowserPdf(token.browserIds);return;}const result=await command('print',{plan:token});notice(`Отправлено этикеток: ${result.submitted}.`+(result.failed?' Партия остановлена. Проверьте очередь и журнал, автоматического повтора нет.':''),result.failed);selected.clear();render();});
 $('autoPrint').onchange=action(async()=>{const enabled=$('autoPrint').checked;$('autoPrint').checked=!!snapshot?.autoPrint;if(!confirm(`${enabled?'Включить':'Выключить'} автоматическую печать на компьютере «${devices.find(v=>v.id===device)?.name}»?${enabled?' Будут печататься только заявки, созданные после этого включения. Прежние заявки автоматически не печатаются.':''}`))return;await command('auto',{enabled});});
 $('settings').onclick=()=>{fillSettings();$('settingsDialog').showModal();};
 for(const b of document.querySelectorAll('[data-close]'))b.onclick=()=>$(b.dataset.close).close();
@@ -247,3 +250,17 @@ $('startup').onchange=action(()=>command('startup',{enabled:$('startup').checked
 $('journalSearch').oninput=renderJournal;$('refreshJournal').onclick=action(async()=>{await refresh(true);renderJournal();});
 $('logout').onclick=action(async()=>{await fetch('/api/auth/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});location.assign('/login');});
 await refresh().catch(e=>notice(e.message,true));setInterval(()=>{if(!busy)refresh().catch(()=>notice('Нет связи с сайтом. Показаны сохранённые карточки.',true));},5000);
+
+async function prepareBrowserPdf(ids){
+  busy=true;renderDisabled();notice('Сервер готовит PDF и проверяет штрихкоды…');
+  try{
+    const response=await fetch('/api/browser/prepare-pdf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+    if(!response.ok){const error=await response.json();throw Error(error.error||'Подготовка не выполнена');}
+    const token=response.headers.get('X-Print-Confirmation'),url=URL.createObjectURL(await response.blob());
+    const result=node('div',undefined,'browser-print-result'),link=node('a','Открыть PDF и печатать');link.href=url;link.target='_blank';link.rel='noopener';
+    const confirm=node('button','Подтвердить успешную печать');confirm.disabled=true;link.onclick=()=>{confirm.disabled=false;};
+    confirm.onclick=action(async()=>{await api('confirm-pdf',{token});result.remove();URL.revokeObjectURL(url);await refresh(true);notice('Успешная печать подтверждена. Заявки в архиве.');});
+    result.append(link,node('span',' Масштаб 100%. Подтверждайте только после получения этикеток. '),confirm);$('notice').after(result);
+    notice('PDF готов. Откройте его, выберите принтер и напечатайте.');
+  }finally{busy=false;renderDisabled();}
+}

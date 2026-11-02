@@ -91,9 +91,10 @@ test('printing reads every page in the selected pipeline and extracts only requi
   const paths = [];
   const {service} = await fixture(t, {fetcher: async url => {
     if (url.endsWith('/oauth2/access_token')) return Response.json({access_token:'access',refresh_token:'refresh',expires_in:3600});
+    if(url.includes('/pipelines/'))return Response.json({_embedded:{statuses:[{id:777,name:'Заказ отправлен'}]}});
     paths.push(new URL(url));
     const page = new URL(url).searchParams.get('page');
-    return Response.json({_embedded:{leads:[{id:Number(page),created_at:123,pipeline_id:8604134,custom_fields_values:[
+    return Response.json({_embedded:{leads:[{id:Number(page),created_at:123,pipeline_id:8604134,status_id:page==='1'?777:778,custom_fields_values:[
       {field_name:'Итоговый вес, кг',values:[{value:4.52}]},
       {field_name:'ORDERID',values:[{value:page === '1' ? '001048' : 1047}]},
       {field_name:'Состав заказа',values:[{value:'Товар 1 - 2; Товар 2 - 1'}]},
@@ -104,6 +105,7 @@ test('printing reads every page in the selected pipeline and extracts only requi
   await service.callback(params(service.start('session')), 'session');
   const data = await service.printCandidates(123);
   assert.equal(data.items.length, 2);
+  assert.equal(data.items[0].shipped,true);assert.equal(data.items[1].shipped,false);
   for (const url of paths) {
     assert.equal(url.hostname, 'snegostroy.amocrm.ru');
     assert.equal(url.searchParams.get('filter[pipeline_id]'), '8604134');

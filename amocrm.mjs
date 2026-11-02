@@ -65,6 +65,13 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
     const unique=[...new Set(texts)];
     return unique.length===1?unique[0]:null;
   }
+  let shippedStatuses = new Set(), statusesAt = -Infinity;
+  async function loadStatuses() {
+    if (now()-statusesAt<60000) return;
+    const pipeline=await get("/api/v4/leads/pipelines/8604134");
+    shippedStatuses=new Set((pipeline._embedded?.statuses||[]).filter(v=>v.name?.trim().toLowerCase()==="заказ отправлен").map(v=>v.id));
+    statusesAt=now();
+  }
   function printItem(lead) {
     const {label, service:deliveryService} = deliveryInfo(lead);
     const composition = fieldText(lead, 'Состав заказа');
@@ -75,10 +82,11 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
       .flatMap(f => f.values || []).map(v => v.value)
       .find(value => (typeof value === 'string' && value.trim()) || (typeof value === 'number' && Number.isSafeInteger(value)));
     const orderNumber = orderValue('ORDERID') ?? orderValue('Номер заказа');
-    return {id: lead.id, orderNumber: orderNumber == null ? null : String(orderNumber).trim(), deliveryService, createdAt: lead.created_at, pipelineId: lead.pipeline_id, packageWeight: packageWeight(lead), composition, hasLabel: Boolean(labelHost), labelHost};
+    return {id: lead.id, shipped: shippedStatuses.has(lead.status_id), statusId:lead.status_id, orderNumber: orderNumber == null ? null : String(orderNumber).trim(), deliveryService, createdAt: lead.created_at, pipelineId: lead.pipeline_id, packageWeight: packageWeight(lead), composition, hasLabel: Boolean(labelHost), labelHost};
   }
   return {
     printCandidates: (from, sample = false) => serial(async () => {
+      await loadStatuses();
       const items = []; const names = new Set();
       for (let page = 1; page <= 40; page++) {
         const query = new URLSearchParams({'limit': '250', page: String(page), 'filter[pipeline_id]': '8604134', 'order[created_at]': sample ? 'desc' : 'asc'});
@@ -94,6 +102,7 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
       throw new Error('Слишком много заявок. Проверка остановлена без пропуска страниц.');
     }),
     printLabel: id => serial(async () => {
+      await loadStatuses();
       const lead = await get('/api/v4/leads/' + id);
       if (lead.pipeline_id !== 8604134) throw new Error('Заявка находится в другой воронке');
       return {item: printItem(lead), url: deliveryInfo(lead).label};

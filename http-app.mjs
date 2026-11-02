@@ -1,4 +1,6 @@
 import http from 'node:http';
+import {browserPdf} from './browser-pdf.mjs';
+import {randomBytes} from 'node:crypto';
 import {webCatalog} from './web-catalog.mjs';
 import {readFile} from 'node:fs/promises';
 import {parseNumbers} from './cdek.mjs';
@@ -17,7 +19,7 @@ async function readJson(req, limit) {
 }
 
 export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '', labelHosts = [], printDevices, browserControl}) {
-  const catalogs=new Map();
+  const catalogs=new Map(),browserBatches=new Map();let preparingBrowser=false;
   const server = http.createServer(async (req, res) => {
     const json = (status, value) => { res.writeHead(status, {'Content-Type': 'application/json; charset=utf-8'}); res.end(JSON.stringify(value)); };
     const redirect = path => { res.writeHead(302, {Location: path}); res.end(); };
@@ -26,7 +28,7 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
     res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     try {
       const path = new URL(req.url, 'http://localhost').pathname;
-      async function sendLabel(id) {
+      async function sendLabel(id,prepare=false) {
           const result = await amocrm.printLabel(id);
           if (!result.url) return json(409,{error:'В заявке нет ссылки на PDF этикетки. Заполните поле этикетки в amoCRM и обновите карточки.'});
           const url = new URL(result.url);
@@ -38,6 +40,7 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
           finally { await reader.cancel(); }
           const content = Buffer.concat(chunks);
           if (!content.subarray(0, 5).equals(Buffer.from('%PDF-'))) return json(415, {error: 'Этикетка должна быть PDF'});
+          if(prepare)return {item:result.item,content};
           res.writeHead(200, {'Content-Type': 'application/pdf','Content-Disposition':'attachment; filename="label-'+id+'.pdf"'}); return res.end(content);
       }
       if (path.startsWith('/webhooks/cdek/')) {
@@ -86,7 +89,9 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
         if (path === '/api/print-agent/leads') {
           const from = Number(params.get('from'));
           if (!Number.isSafeInteger(from) || from < 0) return json(400, {error: 'Некорректная дата'});
-          return json(200, await amocrm.printCandidates(from, params.get('sample') === '1'));
+          const data=await amocrm.printCandidates(from, params.get('sample') === '1');
+          await printDevices?.markShipped?.(data.items);
+          return json(200,data);
         }
         const itemId = path.match(/^\/api\/print-agent\/item\/(\d+)$/)?.[1];
         if (itemId) return json(200, (await amocrm.printLabel(itemId)).item);
@@ -134,6 +139,26 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
         if (!auth.enabled || !session) return json(403,{error:'Войдите на сайт'});
         const browserLabel=path.match(/^\/api\/browser\/label\/(\d+)$/)?.[1];
         if(req.method==='GET'&&browserLabel)return sendLabel(browserLabel);
+        if(req.method==='POST'&&path==='/api/browser/prepare-pdf'){
+          if(preparingBrowser)return json(409,{error:'Подготовка PDF уже выполняется. Подождите.'});
+          const body=await readJson(req,10000);
+          if(!Array.isArray(body.ids)||!body.ids.length||body.ids.length>100||body.ids.some(v=>!/^\d{1,20}$/.test(String(v))))return json(400,{error:'Выберите от 1 до 100 заявок'});
+          const history=printDevices.history();if(body.ids.some(id=>history.uncertain[String(id)]&&!history.printed[String(id)]))return json(409,{error:'В партии есть неопределённое задание. Проверьте предыдущую печать.'});
+          preparingBrowser=true;
+          try{
+            const items=[],contents=[];
+            for(const id of new Set(body.ids.map(String))){const result=await sendLabel(id,true);if(!result)return;items.push(result.item);contents.push(result.content);}
+            const pdf=await browserPdf(items,contents),token=randomBytes(24).toString('hex');
+            for(const [key,batch] of browserBatches)if(batch.expires<Date.now())browserBatches.delete(key);
+            browserBatches.set(token,{ids:items.map(v=>v.id),expires:Date.now()+1800000});
+            res.writeHead(200,{'Content-Type':'application/pdf','X-Print-Confirmation':token,'Content-Disposition':'inline; filename="labels.pdf"'});return res.end(pdf);
+          }finally{preparingBrowser=false;}
+        }
+        if(req.method==='POST'&&path==='/api/browser/confirm-pdf'){
+          const body=await readJson(req,1024),batch=browserBatches.get(body.token);
+          if(!batch||batch.expires<Date.now())return json(409,{error:'Подтверждение истекло. Обновите историю.'});
+          await printDevices.markBrowserPrinted(batch.ids);browserBatches.delete(body.token);return json(200,{ok:true});
+        }
         if (req.method==='GET' && path==='/api/browser/history') return json(200,printDevices.history());
         if (req.method==='GET' && path==='/api/browser/catalog') {
           const from=Number(new URL(req.url,'http://localhost').searchParams.get('from'));
@@ -144,7 +169,7 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
             cached={at:Date.now(),promise:amocrm.printCandidates(from)};catalogs.set(from,cached);
             cached.promise.catch(()=>catalogs.delete(from));
           }
-          const data=await cached.promise,history=printDevices.history();
+          const data=await cached.promise;await printDevices.markShipped?.(data.items);const history=printDevices.history();
           return json(200,{items:webCatalog(data.items,history),journal:history.events,at:Date.now()});
         }
         if (req.method==='GET' && path==='/api/browser/devices') return json(200,{devices:browserControl.list()});

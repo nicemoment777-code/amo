@@ -15,6 +15,12 @@ const sync = await createSync(client, new URL('./data/', import.meta.url), proce
 const amocrm = await createAmoCrm(new URL('./data/amocrm.json', import.meta.url), auth.origin);
 const printDevices = await createPrintDevices(new URL('./data/print-devices.json', import.meta.url));
 const browserControl = await createBrowserControl(new URL('./data/browser-commands.json', import.meta.url));
+let checkingShipped=false;
+async function checkShipped(){
+  if(checkingShipped||!amocrm.status().connected)return;checkingShipped=true;
+  try{const result=await amocrm.printCandidates(0);await printDevices.markShipped(result.items);}catch{console.error('Не удалось сверить отправленные заявки amoCRM');}finally{checkingShipped=false;}
+}
+checkShipped();const shippedTimer=setInterval(checkShipped,60000);shippedTimer.unref();
 const refreshTimer = setInterval(() => { amocrm.refreshDue().catch(() => {}); }, 60000);
 refreshTimer.unref();
 const server = createApp({sync, auth, webhookSecret: process.env.CDEK_WEBHOOK_SECRET, amocrm, printAgentHash: process.env.PRINT_AGENT_TOKEN_HASH, labelHosts: (process.env.PRINT_LABEL_HOSTS || '').split(',').filter(Boolean), printDevices, browserControl});

@@ -22,7 +22,7 @@ done
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl git nginx certbot python3-certbot-nginx openssh-server openssl
+apt-get install -y ca-certificates curl git nginx certbot python3-certbot-nginx openssh-server openssl python3-pypdf python3-reportlab poppler-utils zbar-tools fonts-dejavu-core
 
 if ! command -v node >/dev/null 2>&1 || [[ $(node -p 'Number(process.versions.node.split(".")[0])') -lt 22 ]]; then
   curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
@@ -50,6 +50,7 @@ ln -s /var/lib/amo "$RELEASE/data"
 
 cd "$RELEASE"
 node --test
+python3 ops/test_browser_pdf.py
 
 install -m 0600 -o root -g root "$ENV_IN" /etc/amo.env.next
 WEBHOOK_SECRET=""
@@ -109,6 +110,7 @@ server {
         access_log off;
         proxy_set_header Host 127.0.0.1:3080;
         proxy_pass http://127.0.0.1:3080;
+        proxy_read_timeout 300s;
     }
 
     location = /integrations/amocrm/callback {
@@ -117,6 +119,7 @@ server {
         proxy_set_header Host 127.0.0.1:3080;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_pass http://127.0.0.1:3080;
+        proxy_read_timeout 300s;
     }
 
     location / {
@@ -125,6 +128,7 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_pass http://127.0.0.1:3080;
+        proxy_read_timeout 300s;
     }
 }
 NGINX

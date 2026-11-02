@@ -37,9 +37,9 @@ def prepare_label(source, target, composition, delivery_service=None, package_we
     composition = article_text(composition)
     font = 'LabelArial'
     if font not in pdfmetrics.getRegisteredFontNames():
-        pdfmetrics.registerFont(TTFont(font, 'C:/Windows/Fonts/arial.ttf'))
+        pdfmetrics.registerFont(TTFont(font, str(Path('C:/Windows/Fonts/arial.ttf') if Path('C:/Windows/Fonts/arial.ttf').exists() else Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))))
     if 'LabelArialBold' not in pdfmetrics.getRegisteredFontNames():
-        pdfmetrics.registerFont(TTFont('LabelArialBold', 'C:/Windows/Fonts/arialbd.ttf'))
+        pdfmetrics.registerFont(TTFont('LabelArialBold', str(Path('C:/Windows/Fonts/arialbd.ttf') if Path('C:/Windows/Fonts/arialbd.ttf').exists() else Path('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'))))
     pdfmetrics.registerFontFamily(font,normal=font,bold='LabelArialBold')
     if not composition.strip() or len(composition) > 10000:
         raise ValueError('Некорректный состав заказа')

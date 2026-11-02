@@ -55,8 +55,18 @@ export async function createPrintDevices(file, {now = Date.now} = {}) {
     },
     list: () => Object.entries(data.devices).map(([id, item]) => ({id, name: item.name, revoked: item.revoked})),
     revoke: id => serial(async () => { if (!data.devices[id]) throw new Error('Устройство не найдено'); await save({...data, devices: {...data.devices, [id]: {...data.devices[id], revoked: true}}}); return {ok: true}; }),
+    markBrowserPrinted: ids => serial(async()=>{
+      const browserPrinted={...data.browserPrinted};
+      for(const id of ids)browserPrinted[validId(id)]={at:Math.floor(now()/1000),status:'browser-confirmed'};
+      await save({...data,browserPrinted});
+    }),
+    markShipped: items => serial(async()=>{
+      const shipped={...data.shipped};let changed=false;
+      for(const item of items)if(item.shipped&&!shipped[String(item.id)]){shipped[validId(item.id)]={at:Math.floor(now()/1000),status:"crm-shipped"};changed=true;}
+      if(changed)await save({...data,shipped});
+    }),
     history: () => ({
-      printed: Object.fromEntries(Object.entries(data.jobs).filter(([,v])=>v.status==='printed').map(([id,v])=>[id,{at:Math.floor(v.at/1000),status:'submitted'}])),
+      printed: {...data.browserPrinted,...data.shipped,...Object.fromEntries(Object.entries(data.jobs).filter(([,v])=>v.status==='printed').map(([id,v])=>[id,{at:Math.floor(v.at/1000),status:'submitted'}]))},
       uncertain: Object.fromEntries(Object.entries(data.jobs).filter(([,v])=>v.status==='claimed').map(([id,v])=>[id,{at:Math.floor(v.at/1000),status:'reserved-on-server'}])),
       events: Object.values(data.events)
     }),
@@ -81,7 +91,7 @@ export async function createPrintDevices(file, {now = Date.now} = {}) {
     }),
     claim: (id, owner) => serial(async () => {
       id = validId(id);
-      if (data.jobs[id]) return {claimed: false};
+      if (data.jobs[id] || data.shipped?.[id] || data.browserPrinted?.[id]) return {claimed: false};
       await save({...data, jobs: {...data.jobs, [id]: {owner, status: 'claimed', at: now()}}}); return {claimed: true};
     }),
     complete: (id, owner) => serial(async () => {

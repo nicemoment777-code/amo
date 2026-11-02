@@ -58,3 +58,16 @@ test('shared print history persists, imports idempotently, and never frees a cla
   assert.equal(service.history().events.length,1);
   assert.equal(service.history().printed['12'].at,100);
 });
+
+test('CRM shipped status is durable, prevents auto claim and preserves driver uncertainty',async t=>{
+  const dir=await mkdtemp(join(tmpdir(),'crm-shipped-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const file=pathToFileURL(join(dir,'devices.json')),devices=await createPrintDevices(file,{now:()=>100000});
+  await devices.claim(1,'device');
+  await devices.markShipped([{id:1,shipped:true},{id:2,shipped:false},{id:3,shipped:true}]);
+  const restarted=await createPrintDevices(file);
+  assert.equal(restarted.history().printed['1'].status,'crm-shipped');
+  assert.ok(restarted.history().uncertain['1']);
+  assert.equal(restarted.history().printed['2'],undefined);
+  assert.equal((await restarted.claim(3,'device')).claimed,false);
+  assert.equal(restarted.history().events.length,0);
+});
