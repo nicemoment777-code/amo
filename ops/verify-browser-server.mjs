@@ -27,11 +27,15 @@ for(let page=1;page<=40;page++){
 }
 console.log(JSON.stringify({missingSku:missing,categories:[...groups].map(([key,count])=>({...JSON.parse(key),count}))}));
 
-const detailAudit=[];
-for(const lead of freshMissing.sort((a,b)=>b.created_at-a.created_at).slice(0,10)){
- const detail=await get('/api/v4/leads/'+lead.id+'?with=catalog_elements');
- const fields=detail.custom_fields_values||[],composition=fields.filter(f=>f.field_name?.trim().toLowerCase()==='состав заказа').flatMap(f=>f.values||[]).map(v=>String(v.value||'')).join('\n');
- const links=await get('/api/v4/leads/'+lead.id+'/links');
- detailAudit.push({ageDays:Math.floor((Date.now()/1000-lead.created_at)/86400),detailHasSku:/\([^()]+\)/.test(composition),compositionEmpty:!composition.trim(),productFields:fields.filter(f=>/состав|товар|product|артик|sku/i.test(f.field_name||'')).length,productLinks:(links._embedded?.links||[]).filter(v=>v.to_entity_type==='catalog_elements').length});
+
+const productShapes=new Map();let withProducts=0;
+for(const lead of freshMissing){
+ for(const field of lead.custom_fields_values||[]){
+  if(![field.field_name,field.field_code].some(v=>v?.trim().toUpperCase()==='PRODUCTS'))continue;
+  for(const entry of field.values||[]){const value=entry.value;if(value===null||value==='')continue;withProducts++;
+   let structured=false,keys=[];try{const parsed=typeof value==='string'?JSON.parse(value):value;if(typeof parsed==='object'&&parsed){structured=true;keys=Object.keys(Array.isArray(parsed)?parsed[0]||{}:parsed).filter(k=>/^(sku|article|name|quantity|count|price|products|items)$/i.test(k));}}catch{}
+   const text=String(value),key=JSON.stringify({type:typeof value,structured,keys,parentheses:/\([^()]+\)/.test(text),lines:text.split(/\n/).length,semicolon:text.includes(';'),quantitySuffix:/\s[-—×x]\s*\d+\s*(?:шт[.]?)?\s*$/i.test(text),plainSku:/^[\p{L}\p{N}_.-]+$/u.test(text)});productShapes.set(key,(productShapes.get(key)||0)+1);
+  }
+ }
 }
-console.log(JSON.stringify({freshMissingDetails:detailAudit}));
+console.log(JSON.stringify({productsValues:withProducts,shapes:[...productShapes].map(([key,count])=>({...JSON.parse(key),count}))}));
