@@ -11,7 +11,8 @@ async function api(path, body) {
 async function update() {
   const data = await api('status');
   document.querySelector('#redirectUri').textContent = data.redirectUri;
-  document.querySelector('#status').textContent = data.connected ? 'Токены сохранены. Нажмите «Проверить подключение», чтобы проверить доступ.' : data.configured ? 'Ключи сохранены. Разрешите доступ в amoCRM.' : 'Ключи ещё не сохранены.';
+  document.querySelector('#status').textContent = data.connected ? 'amoCRM уже подключена. Ключи сохранены на сервере и обновляются автоматически. Повторно вводить реквизиты не нужно.' : data.configured ? 'Ключи сохранены. Разрешите доступ в amoCRM.' : 'Ключи ещё не сохранены.';
+  document.querySelector('#connectionSetup').hidden=data.connected;document.querySelector('#manageConnection').hidden=!data.connected;
   connect.disabled = !data.configured; verify.disabled = !data.connected;
 }
 async function run(button, action) {
@@ -56,3 +57,5 @@ document.querySelector('#pairDevice').addEventListener('submit', event => {
   });
 });
 devices().catch(error => { message.textContent = error.message; });
+
+document.querySelector('#manageConnection').onclick=()=>{document.querySelector('#connectionSetup').hidden=!document.querySelector('#connectionSetup').hidden;};
