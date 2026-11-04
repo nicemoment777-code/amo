@@ -74,7 +74,7 @@ async function refresh(force=false){
   }
   for(const [id,v] of items){
     const uncertain=v.statusText==='Печать не подтверждена';
-    if(history.printed[id]&&(!uncertain||['crm-shipped','browser-confirmed'].includes(history.printed[id].status))){v.confirmed=true;v.statusText='Передано драйверу';}
+    if(history.printed[id]&&(!uncertain||['crm-shipped','browser-confirmed','owner-date-archive'].includes(history.printed[id].status))){v.confirmed=true;v.statusText='Передано драйверу';}
     else if(history.uncertain[id]&&!history.printed[id]){v.confirmed=false;v.canPrint=false;v.statusText='Печать не подтверждена';}
   }
   const journal=[...(local?.journal||[])],known=new Set(journal.map(v=>[v.id,v.at,v.printer||''].join('|')));

@@ -62,7 +62,13 @@ export async function createPrintDevices(file, {now = Date.now} = {}) {
     }),
     markShipped: items => serial(async()=>{
       const shipped={...data.shipped};let changed=false;
-      for(const item of items)if(item.shipped&&!shipped[String(item.id)]){shipped[validId(item.id)]={at:Math.floor(now()/1000),status:"crm-shipped"};changed=true;}
+      const cutoff=Date.parse('2026-10-31T00:00:00+03:00')/1000;
+      for(const item of items){
+        const beforeCutoff=Number.isFinite(item.createdAt)&&item.createdAt>0&&item.createdAt<cutoff;
+        if((item.shipped||beforeCutoff)&&!shipped[String(item.id)]){
+          shipped[validId(item.id)]={at:Math.floor(now()/1000),status:item.shipped?'crm-shipped':'owner-date-archive'};changed=true;
+        }
+      }
       if(changed)await save({...data,shipped});
     }),
     history: () => ({

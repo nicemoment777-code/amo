@@ -71,3 +71,16 @@ test('CRM shipped status is durable, prevents auto claim and preserves driver un
   assert.equal((await restarted.claim(3,'device')).claimed,false);
   assert.equal(restarted.history().events.length,0);
 });
+
+test('owner archive cutoff is exclusive midnight Moscow and survives restart',async t=>{
+ const dir=await mkdtemp(join(tmpdir(),'owner-cutoff-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ const file=pathToFileURL(join(dir,'devices.json')),service=await createPrintDevices(file);
+ const cutoff=Date.parse('2026-10-31T00:00:00+03:00')/1000;
+ await service.claim(1,'device');
+ await service.markShipped([{id:1,createdAt:cutoff-1},{id:2,createdAt:cutoff},{id:3,createdAt:cutoff+1},{id:4},{id:5,createdAt:0}]);
+ const restarted=await createPrintDevices(file),history=restarted.history();
+ assert.equal(history.printed['1'].status,'owner-date-archive');assert.ok(history.uncertain['1']);
+ for(const id of ['2','3','4','5'])assert.equal(history.printed[id],undefined);
+ assert.equal((await restarted.claim(1,'other')).claimed,false);
+ assert.equal(history.events.length,0);
+});

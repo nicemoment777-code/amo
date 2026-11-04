@@ -6,7 +6,7 @@ const amo=await createAmoCrm(pathToFileURL('/var/lib/amo/amocrm.json'),'https://
 const {labelDownload}=await import(pathToFileURL(root+'label-download.mjs'));
 const data=await amo.printCandidates(0);
 const saved=JSON.parse(await readFile('/var/lib/amo/print-devices.json','utf8'));
-console.log(JSON.stringify({total:data.items.length,shipped:data.items.filter(v=>v.shipped).length,markedShipped:Object.keys(saved.shipped||{}).length}));
+console.log(JSON.stringify({total:data.items.length,shipped:data.items.filter(v=>v.shipped).length,markedShipped:Object.keys(saved.shipped||{}).length,dateArchived:Object.values(saved.shipped||{}).filter(v=>v.status==='owner-date-archive').length,beforeCutoff:data.items.filter(v=>v.createdAt>0&&v.createdAt<Date.parse('2026-10-31T00:00:00+03:00')/1000).length,oldUnarchived:data.items.filter(v=>v.createdAt>0&&v.createdAt<Date.parse('2026-10-31T00:00:00+03:00')/1000&&!saved.shipped?.[v.id]&&saved.jobs?.[v.id]?.status!=='printed'&&!saved.browserPrinted?.[v.id]).length}));
 
 const stored=JSON.parse(await readFile('/var/lib/amo/amocrm.json','utf8'));
 async function get(path){const r=await fetch('https://snegostroy.amocrm.ru'+path,{headers:{Authorization:'Bearer '+stored.accessToken}});if(!r.ok)throw Error('CRM '+r.status);return r.json();}
