@@ -12,3 +12,5 @@ for(let page=1;page<=40;page++){const data=await get('/api/v4/leads?limit=250&fi
 let directBlocked=null;
 if(ids.size){try{await amo.printLabel([...ids][0]);directBlocked=false;}catch(error){directBlocked=error.status===409;}}
 console.log(JSON.stringify({feedbackStageFound:stages.length===1,feedbackCount:ids.size,visibleFeedback:catalog.items.filter(v=>ids.has(String(v.id))).length,directPrintingBlocked:directBlocked}));
+
+if(stages.length!==1||catalog.items.some(v=>ids.has(String(v.id)))||(ids.size&&directBlocked!==true))throw Error('Feedback exclusion verification failed');

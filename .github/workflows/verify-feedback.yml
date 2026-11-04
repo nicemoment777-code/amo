@@ -1,10 +1,14 @@
 name: Verify feedback requests exclusion
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: [Deploy production]
+    types: [completed]
 permissions:
   contents: read
 jobs:
   diagnose:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
