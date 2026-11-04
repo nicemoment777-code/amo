@@ -2,7 +2,7 @@ import {day,stamp,title,formatCreatedAt,filterItems,articleCounts,orderedGroups,
 const $=id=>document.getElementById(id);
 const printerIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 9V3h12v6M6 17H3V9h18v8h-3M6 14h12v7H6z"/><path d="M17 11h2"/></svg>';
 const copyIcon='<svg viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 6V2h12v16h-3M2 6h12v16H2z"/></svg>';
-let snapshot=null,devices=[],device='browser',carrier='all',status='pending',query='',selected=new Set(),skuFilter=null,selection=false,range=null,busy=false,plan=null,hydratedDevice='',routesDraft=[];
+let snapshot=null,devices=[],device=(localStorage.getItem('snowbrick-device')==='browser'?'':localStorage.getItem('snowbrick-device')||''),carrier='all',status='pending',query='',selected=new Set(),skuFilter=null,selection=false,range=null,busy=false,plan=null,hydratedDevice='',routesDraft=[];
 let visible=[],deliveryItems=[],allPeriod=[],cloud=null,cloudAt=0,cloudFrom=null,verified=false;
 let archiveMode=false;
 let archiveCatalog=[],archiveLoaded=false,archiveLoading=false,archiveHistory={printed:{},uncertain:{}};
@@ -44,13 +44,13 @@ function renderDisabled(){
 async function refresh(force=false){
   verified=false;renderDisabled();
   const data=await api('devices');devices=data.devices;
-  if(device!=='browser'&&!devices.some(v=>v.id===device&&v.online))device='browser';
-  const selector=$('device');selector.replaceChildren();const browserOption=node('option','Принтеры этого компьютера · без модуля');browserOption.value='browser';selector.append(browserOption);
+  if(!devices.some(v=>v.id===device&&v.online))device=devices.find(v=>v.online)?.id||devices.find(v=>v.id===device)?.id||devices[0]?.id||'';
+  const selector=$('device');selector.replaceChildren();if(!devices.length){const empty=node('option','Установите и запустите модуль печати');empty.value='';selector.append(empty);}
   for(const v of devices){const o=node('option',v.name+(v.online?' · на связи':' · не на связи'));o.value=v.id;selector.append(o);}selector.value=device;
   let local=null;
   if(online())try{local=await api('snapshot?device='+encodeURIComponent(device));}catch{devices=devices.map(v=>v.id===device?{...v,online:false}:v);}
   const computer=devices.find(v=>v.id===device);
-  $('onboarding').hidden=true;$('install').hidden=true;
+  $('onboarding').hidden=!!local;$('install').hidden=false;
   $('deviceState').textContent=device==='browser'?'Принтер выбирается в окне печати PDF':local?`Подключено принтеров: ${local.printers.length}`:'Компьютер печати не на связи';
   $('onboardingTitle').textContent=computer?'Запустите модуль на компьютере печати':'Подключите компьютер с принтерами';
   $('onboardingText').textContent=computer?`Нет связи с компьютером «${computer.name}». Запустите уже установленный модуль на нём. Повторно вводить ключи amoCRM не требуется.`:'amoCRM уже подключена на сервере: ключи и IP вводить не нужно. Для принтеров нового компьютера один раз установите модуль Windows и подтвердите этот компьютер.';
@@ -192,7 +192,7 @@ async function preparePrint(items,mode,context){
 }
 function fillSettings(){
   if(!snapshot)return;
-  const browserMode=device==='browser';$('settingsDialog').classList.toggle('browser-mode',browserMode);$('browserPrinterControls').hidden=!browserMode;$('modulePrinterControls').hidden=browserMode;$('useBrowserPrinting').hidden=browserMode;
+  const browserMode=false;$('settingsDialog').classList.toggle('browser-mode',browserMode);$('browserPrinterControls').hidden=!browserMode;$('modulePrinterControls').hidden=browserMode;$('useBrowserPrinting').hidden=true;
   $('browserSettingsPrint').disabled=busy||!verified||!visible.some(v=>v.canPrint);
   $('printerSource').textContent=online()?`Принтеры компьютера «${devices.find(v=>v.id===device)?.name}»: ${snapshot.printers.length}. Подключение amoCRM уже настроено на сервере.`:'Компьютер печати не на связи. Список принтеров появится после запуска его модуля.';
   routesDraft=structuredClone(snapshot.routes.slots||snapshot.routes.routes||[]);while(routesDraft.length<4)routesDraft.push({printer:'',skus:[]});
