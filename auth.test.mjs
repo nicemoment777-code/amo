@@ -10,7 +10,7 @@ const config = {NODE_ENV: 'production', APP_ORIGIN: 'https://example.test', DASH
 async function fixture(t, options) {
   const queued = [], auth = createAuth(config, options);
   const sync = {orders: {}, state: () => ({orders: [{number: '12345'}], pendingCount: 0, job: {running: false}}), enqueue: n => queued.push(n), verify: async () => {}};
-  const server = createApp({sync, auth, webhookSecret: 'a'.repeat(64)});
+  const server = createApp({sync, auth, webhookSecret: 'a'.repeat(64),installerFile:new URL('./data/synthetic-missing-installer.test',import.meta.url)});
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
   const request = (path, options = {}) => fetch(`http://127.0.0.1:${server.address().port}${path}`, {redirect: 'manual', ...options});

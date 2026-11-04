@@ -19,7 +19,7 @@ async function readJson(req, limit) {
   catch { throw new Error('Некорректный JSON'); }
 }
 
-export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '', labelHosts = [], printDevices, browserControl}) {
+export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '', labelHosts = [], printDevices, browserControl, installerFile=new URL('./data/private/SnowbrickSetup.exe',import.meta.url)}) {
   const catalogs=new Map(),browserBatches=new Map();let preparingBrowser=false;
   const server = http.createServer(async (req, res) => {
     const json = (status, value) => { res.writeHead(status, {'Content-Type': 'application/json; charset=utf-8'}); res.end(JSON.stringify(value)); };
@@ -134,7 +134,7 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
       }
       if(req.method==='GET'&&path==='/api/printing/installer'){
         if(!auth.enabled||!session)return json(403,{error:'Войдите на сайт для скачивания персонального установщика'});
-        try{const installer=await readFile(new URL('./data/private/SnowbrickSetup.exe',import.meta.url));
+        try{const installer=await readFile(installerFile);
           res.writeHead(200,{'Content-Type':'application/vnd.microsoft.portable-executable','Content-Disposition':'attachment; filename="SnowbrickSetup.exe"','Cache-Control':'private, no-store'});return res.end(installer);
         }catch{return json(503,{error:'Персональный установщик ещё готовится. Повторите скачивание позже.'});}
       }
