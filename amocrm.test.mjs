@@ -144,3 +144,14 @@ test('HTTP protects setup and credentials, enforces Origin and clears callback q
   assert.equal(result.headers.get('referrer-policy'), 'no-referrer');
   assert.equal((await post('/api/amocrm/verify', {}, {Cookie: cookie})).status, 200);
 });
+
+test('all three completed delivery stages are archived, pending remains printable',async t=>{
+ const stages=['Заказ отправлен','Принято в СДЭК','В пункте выдачи','Новый заказ'];
+ const {service}=await fixture(t,{fetcher:async url=>{
+  if(url.endsWith('/oauth2/access_token'))return Response.json({access_token:'access',refresh_token:'refresh',expires_in:3600});
+  if(url.includes('/pipelines/'))return Response.json({_embedded:{statuses:stages.map((name,id)=>({id,name}))}});
+  return Response.json({_embedded:{leads:stages.map((_,status_id)=>({id:status_id+1,status_id,pipeline_id:8604134,custom_fields_values:[]}))}});
+ }});
+ await service.configure(credentials);await service.callback(params(service.start('session')),'session');
+ assert.deepEqual((await service.printCandidates(0)).items.map(v=>v.shipped),[true,true,true,false]);
+});

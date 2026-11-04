@@ -69,7 +69,7 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
   async function loadStatuses() {
     if (now()-statusesAt<60000) return;
     const pipeline=await get("/api/v4/leads/pipelines/8604134");
-    shippedStatuses=new Set((pipeline._embedded?.statuses||[]).filter(v=>v.name?.trim().toLowerCase()==="заказ отправлен").map(v=>v.id));
+    shippedStatuses=new Set((pipeline._embedded?.statuses||[]).filter(v=>['заказ отправлен','принято в сдэк','принят в сдэк','в пункте выдачи'].includes(v.name?.trim().toLowerCase().replace(/\s+/g,' '))).map(v=>v.id));
     statusesAt=now();
   }
   function printItem(lead) {

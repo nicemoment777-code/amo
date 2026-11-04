@@ -67,10 +67,10 @@ async function refresh(force=false){
   const items=new Map((cloud?.items||[]).map(v=>[String(v.id),v]));
   for(const v of local?.items||[]){
     const fresh=items.get(String(v.id));if(!fresh)continue;
-    const uncertain=v.statusText==='Печать не подтверждена';
+    const uncertain=v.statusText==='Печать не подтверждена',sameData=JSON.stringify(v.skus)===JSON.stringify(fresh.skus)&&v.hasLabel===fresh.hasLabel;
     items.set(String(v.id),{...v,...fresh,colors:JSON.stringify(v.skus)===JSON.stringify(fresh.skus)?v.colors:fresh.colors,
-      confirmed:fresh.shipped|| (uncertain?false:fresh.confirmed||v.confirmed),canPrint:fresh.canPrint&&v.canPrint,
-      statusText:uncertain?v.statusText:fresh.statusText,reasons:[...new Set([...fresh.reasons,...v.reasons])]});
+      confirmed:fresh.shipped|| (uncertain?false:fresh.confirmed||v.confirmed),canPrint:fresh.canPrint&&!uncertain&&(!sameData||v.canPrint),
+      statusText:uncertain?v.statusText:fresh.statusText,reasons:sameData?[...new Set([...fresh.reasons,...v.reasons])]:fresh.reasons});
   }
   for(const [id,v] of items){
     const uncertain=v.statusText==='Печать не подтверждена';
@@ -232,7 +232,7 @@ $('applyStart').onclick=action(async()=>{if(!$('historyStart').value)throw Error
 $('historyStart').onchange=$('applyStart').onclick;
 $('searchForm').onsubmit=e=>{e.preventDefault();query=$('search').value.trim();carrier='all';skuFilter=null;range=null;render();};$('resetSearch').onclick=()=>{query='';$('search').value='';render();};
 $('device').onchange=action(async()=>{if(busy)throw Error('Дождитесь завершения действия');device=$('device').value;localStorage.setItem('snowbrick-device',device);snapshot=null;$('orders').replaceChildren();await refresh();});
-$('refresh').onclick=action(async()=>{if(online())await command('refresh');await refresh(true);});$('refreshArticles').onclick=action(async()=>{await refresh(true);});
+$('refresh').onclick=action(async()=>{if(online())await command('refresh');await refresh(true);});$('refreshArticles').onclick=action(async()=>{if(online())await command('articles');await refresh(true);});
 $('openPrintedArchive').onclick=action(openPrintedArchive);$('refreshPrintedArchive').onclick=action(openPrintedArchive);
 $('printedArchiveSearch').oninput=()=>renderPrintedArchive();
 $('printAll').onclick=action(()=>preparePrint(visible,carrier==='all'?'selected':'carrier',`${carrier==='all'?'Все доставки':carrier==='yandex'?'Яндекс доставка':'СДЭК доставка'} · текущий список заявок`));
