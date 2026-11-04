@@ -42,3 +42,13 @@ console.log(JSON.stringify({productsValues:withProducts,shapes:[...productShapes
 
 const pending=data.items.filter(v=>!saved.shipped?.[v.id]&&!saved.browserPrinted?.[v.id]&&saved.jobs?.[v.id]?.status!=='printed');
 console.log(JSON.stringify({pending:pending.length,productsFallback:pending.filter(v=>v.articleSource==='products').length,remainingMissing:pending.filter(v=>!/\([^()]*\S[^()]*\)/.test(v.composition||'')).length}));
+const candidate=pending.filter(v=>v.hasLabel&&/\([^()]*\S[^()]*\)/.test(v.composition||'')).sort((a,b)=>b.createdAt-a.createdAt)[0];
+if(candidate){
+ const {browserPdf}=await import(pathToFileURL(root+'browser-pdf.mjs'));
+ const label=await amo.printLabel(candidate.id),url=new URL(label.url);
+ if(url.protocol!=='https:'||url.hostname!=='files.crmkit.ru')throw Error('Unexpected label host');
+ const response=await labelDownload(url);if(!response.ok)throw Error('Label HTTP '+response.status);
+ const content=Buffer.from(await response.arrayBuffer());if(content.length>10e6)throw Error('Label too large');
+ const prepared=await browserPdf([label.item],[content]);
+ console.log(JSON.stringify({realPdfPrepared:prepared.subarray(0,5).toString()==='%PDF-',bytes:prepared.length,physicalPrint:false}));
+}
