@@ -19,7 +19,7 @@ import queue
 from datetime import datetime, timedelta
 import tkinter as tk
 from tkinter import ttk, messagebox
-from urllib.request import Request, build_opener, HTTPRedirectHandler
+from urllib.request import Request, build_opener, HTTPRedirectHandler, ProxyHandler
 import webbrowser
 import winreg
 from profile_paths import profile_paths
@@ -93,7 +93,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 def pair_request(path, body):
     req = Request(ORIGIN+'/api/print-pair/'+path, data=json.dumps(body).encode(), headers={'Content-Type':'application/json'})
-    with build_opener(NoRedirect()).open(req, timeout=30) as response:
+    with build_opener(ProxyHandler({}), NoRedirect()).open(req, timeout=30) as response:
         return json.loads(response.read(4096))
 
 def powershell(command):

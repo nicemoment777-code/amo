@@ -25,7 +25,15 @@ jobs:
           trap 'rm -f access.txt SnowbrickPersonalSetup.exe payload.zip' EXIT
           curl -fsSL https://github.com/nicemoment777-code/amo/releases/download/windows-web-agent/SnowbrickSetup.exe -o PublicSetup.exe
           mcs -out:extract.exe ops/ExtractInstallerPayload.cs
-          mono extract.exe PublicSetup.exe payload.zip
+          mono extract.exe PublicSetup.exe original-payload.zip
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          with zipfile.ZipFile('original-payload.zip') as source, zipfile.ZipFile('payload.zip','w',compression=zipfile.ZIP_DEFLATED) as target:
+              for entry in source.infolist():
+                  content=Path('ops/print-agent.py').read_bytes() if entry.filename.endswith('/ops/print-agent.py') else source.read(entry)
+                  target.writestr(entry,content)
+          PY
           printf '%s' "$PRECONNECTED" > access.txt
           mcs -target:winexe -platform:x64 -r:System.Windows.Forms -r:System.Security -r:System.Web.Extensions -r:System.IO.Compression -r:System.IO.Compression.FileSystem -r:Microsoft.CSharp -resource:payload.zip,payload.zip -resource:access.txt,preconnected.token -out:SnowbrickPersonalSetup.exe desktop/Setup.cs
           printf '%s\n' "$KNOWN_HOSTS" > known_hosts

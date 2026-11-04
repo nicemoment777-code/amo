@@ -10,7 +10,7 @@ import threading
 import msvcrt
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.request import Request, build_opener, HTTPRedirectHandler
+from urllib.request import Request, build_opener, HTTPRedirectHandler, ProxyHandler
 from urllib.error import HTTPError
 from contextlib import contextmanager
 from print_order import group_key, grouped_print_order
@@ -56,7 +56,7 @@ def browser_client_id():
 def request(path, body=None):
     token = os.environ['PRINT_AGENT_TOKEN']
     req = Request(ORIGIN + '/api/print-agent/' + path, data=json.dumps(body).encode() if body is not None else None, headers={'Authorization': 'Bearer ' + token, 'Content-Type':'application/json','X-Print-Client':browser_client_id()})
-    with build_opener(NoRedirect()).open(req, timeout=60) as response:
+    with build_opener(ProxyHandler({}), NoRedirect()).open(req, timeout=60) as response:
         content = response.read(10_000_001)
         if len(content) > 10_000_000:
             raise RuntimeError('Ответ превышает допустимый размер')
