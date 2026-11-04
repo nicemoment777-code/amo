@@ -9,6 +9,8 @@ const login=await request('/api/auth/login',{method:'POST',headers:{Origin:origi
 assert.equal(login.status,200);
 const headers={Cookie:login.headers.get('set-cookie').split(';')[0],Origin:origin,'Content-Type':'application/json'};
 try{
+ const crmResponse=await request('/api/amocrm/status',{headers});assert.equal(crmResponse.status,200);const crm=await crmResponse.json();assert.ok(crm.connected,'CRM is not connected');
+ const installerResponse=await request('/api/printing/installer',{headers});assert.equal(installerResponse.status,200);const installerReader=installerResponse.body.getReader();const first=await installerReader.read();assert.equal(Buffer.from(first.value).subarray(0,2).toString(),'MZ');await installerReader.cancel();
  let found=null,foundId=null;
  for(let attempt=0;attempt<20&&!found;attempt++){
    const list=await request('/api/browser/devices',{headers});assert.equal(list.status,200);
@@ -34,5 +36,5 @@ try{
  assert.ok(completed,'Companion did not process printer discovery');
  const catalog=await request('/api/browser/catalog?from=1790802000',{headers});assert.equal(catalog.status,200);
  const data=await catalog.json();
- console.log(JSON.stringify({standalone:true,commandRoundTrip:true,loopActive:found.loopActive,autoPrint:found.autoPrint,printers:found.printers.length,desktopOrders:found.items.length,serverOrders:data.items.length}));
+ console.log(JSON.stringify({crmConnected:true,privateInstaller:true,standalone:true,commandRoundTrip:true,loopActive:found.loopActive,autoPrint:found.autoPrint,printers:found.printers.length,desktopOrders:found.items.length,serverOrders:data.items.length}));
 }finally{await request('/api/auth/logout',{method:'POST',headers,body:'{}'});}
