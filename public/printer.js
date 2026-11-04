@@ -2,7 +2,7 @@ import {day,stamp,title,formatCreatedAt,filterItems,articleCounts,orderedGroups,
 const $=id=>document.getElementById(id);
 const printerIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 9V3h12v6M6 17H3V9h18v8h-3M6 14h12v7H6z"/><path d="M17 11h2"/></svg>';
 const copyIcon='<svg viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 6V2h12v16h-3M2 6h12v16H2z"/></svg>';
-let snapshot=null,devices=[],device=localStorage.getItem('snowbrick-device')||'browser',carrier='all',status='pending',query='',selected=new Set(),skuFilter=null,selection=false,range=null,busy=false,plan=null,hydratedDevice='',routesDraft=[];
+let snapshot=null,devices=[],device='browser',carrier='all',status='pending',query='',selected=new Set(),skuFilter=null,selection=false,range=null,busy=false,plan=null,hydratedDevice='',routesDraft=[];
 let visible=[],deliveryItems=[],allPeriod=[],cloud=null,cloudAt=0,cloudFrom=null,verified=false;
 let archiveMode=false;
 let archiveCatalog=[],archiveLoaded=false,archiveLoading=false,archiveHistory={printed:{},uncertain:{}};
@@ -45,7 +45,7 @@ async function refresh(force=false){
   verified=false;renderDisabled();
   const data=await api('devices');devices=data.devices;
   if(device!=='browser'&&!devices.some(v=>v.id===device&&v.online))device='browser';
-  const selector=$('device');selector.replaceChildren();const browserOption=node('option','Этот браузер · без модуля');browserOption.value='browser';selector.append(browserOption);
+  const selector=$('device');selector.replaceChildren();const browserOption=node('option','Принтеры этого компьютера · без модуля');browserOption.value='browser';selector.append(browserOption);
   for(const v of devices){const o=node('option',v.name+(v.online?' · на связи':' · не на связи'));o.value=v.id;selector.append(o);}selector.value=device;
   let local=null;
   if(online())try{local=await api('snapshot?device='+encodeURIComponent(device));}catch{devices=devices.map(v=>v.id===device?{...v,online:false}:v);}
@@ -192,6 +192,8 @@ async function preparePrint(items,mode,context){
 }
 function fillSettings(){
   if(!snapshot)return;
+  const browserMode=device==='browser';$('settingsDialog').classList.toggle('browser-mode',browserMode);$('browserPrinterControls').hidden=!browserMode;$('modulePrinterControls').hidden=browserMode;$('useBrowserPrinting').hidden=browserMode;
+  $('browserSettingsPrint').disabled=busy||!verified||!visible.some(v=>v.canPrint);
   $('printerSource').textContent=online()?`Принтеры компьютера «${devices.find(v=>v.id===device)?.name}»: ${snapshot.printers.length}. Подключение amoCRM уже настроено на сервере.`:'Компьютер печати не на связи. Список принтеров появится после запуска его модуля.';
   routesDraft=structuredClone(snapshot.routes.slots||snapshot.routes.routes||[]);while(routesDraft.length<4)routesDraft.push({printer:'',skus:[]});
   const select=$('defaultPrinter');select.replaceChildren();for(const name of snapshot.printers){const o=node('option',name);o.value=name;select.append(o);}select.value=snapshot.printer;
@@ -241,6 +243,8 @@ $('printAllYandex').onclick=action(()=>preparePrint(serviceBatch('yandex'),'carr
 $('printSelected').onclick=action(()=>preparePrint(visible.filter(v=>selected.has(String(v.id))),'selected','Выбранные заявки'));
 $('confirmPrint').onclick=action(async()=>{const token=plan;plan=null;$('confirmDialog').close();if(!token)return;if(token.browserIds){await prepareBrowserPdf(token.browserIds);return;}const result=await command('print',{plan:token});notice(`Отправлено этикеток: ${result.submitted}.`+(result.failed?' Партия остановлена. Проверьте очередь и журнал, автоматического повтора нет.':''),result.failed);selected.clear();render();});
 $('autoPrint').onchange=action(async()=>{const enabled=$('autoPrint').checked;$('autoPrint').checked=!!snapshot?.autoPrint;if(!confirm(`${enabled?'Включить':'Выключить'} автоматическую печать на компьютере «${devices.find(v=>v.id===device)?.name}»?${enabled?' Будут печататься только заявки, созданные после этого включения. Прежние заявки автоматически не печатаются.':''}`))return;await command('auto',{enabled});});
+$('useBrowserPrinting').onclick=action(async()=>{device='browser';localStorage.setItem('snowbrick-device',device);await refresh();fillSettings();});
+$('browserSettingsPrint').onclick=action(async()=>{$('settingsDialog').close();await preparePrint(visible,'all','Печать на этом компьютере');});
 $('settings').onclick=()=>{fillSettings();$('settingsDialog').showModal();};
 for(const b of document.querySelectorAll('[data-close]'))b.onclick=()=>$(b.dataset.close).close();
 for(const b of $('settingsTabs').querySelectorAll('button'))b.onclick=()=>{for(const s of document.querySelectorAll('.settingspage'))s.hidden=s.id!==b.dataset.page;for(const x of $('settingsTabs').querySelectorAll('button'))x.classList.toggle('active',x===b);if(b.dataset.page==='journalPage')renderJournal();};
@@ -257,10 +261,10 @@ async function prepareBrowserPdf(ids){
     const response=await fetch('/api/browser/prepare-pdf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
     if(!response.ok){const error=await response.json();throw Error(error.error||'Подготовка не выполнена');}
     const token=response.headers.get('X-Print-Confirmation'),url=URL.createObjectURL(await response.blob());
-    const result=node('div',undefined,'browser-print-result'),link=node('a','Открыть PDF и печатать');link.href=url;link.target='_blank';link.rel='noopener';
+    const result=node('div',undefined,'browser-print-result'),link=node('a','Открыть PDF → выбрать принтер (Ctrl+P)');link.href=url;link.target='_blank';link.rel='noopener';
     const confirm=node('button','Подтвердить успешную печать');confirm.disabled=true;link.onclick=()=>{confirm.disabled=false;};
     confirm.onclick=action(async()=>{await api('confirm-pdf',{token});result.remove();URL.revokeObjectURL(url);await refresh(true);notice('Успешная печать подтверждена. Заявки в архиве.');});
-    result.append(link,node('span',' Масштаб 100%. Подтверждайте только после получения этикеток. '),confirm);$('notice').after(result);
-    notice('PDF готов. Откройте его, выберите принтер и напечатайте.');
+    result.append(link,node('span',' В PDF нажмите Ctrl+P, выберите принтер Windows. Масштаб 100%. Подтвердите после получения этикеток. '),confirm);$('browserPrintResults').replaceChildren(result);$('browserPrintResults').scrollIntoView({behavior:'smooth',block:'center'});
+    notice('PDF готов. Нажмите «Открыть PDF → выбрать принтер», затем Ctrl+P. Дополнительный модуль не нужен.');
   }finally{busy=false;renderDisabled();}
 }
