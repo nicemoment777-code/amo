@@ -1,5 +1,6 @@
 import {readFile, writeFile, rename, chmod} from 'node:fs/promises';
 import {randomBytes, createHash} from 'node:crypto';
+import {orderComposition} from './order-composition.mjs';
 import {deliveryInfo} from './delivery-service.mjs';
 
 export const callbackPath = '/integrations/amocrm/callback';
@@ -74,7 +75,7 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
   }
   function printItem(lead) {
     const {label, service:deliveryService} = deliveryInfo(lead);
-    const composition = fieldText(lead, 'Состав заказа');
+    const {composition,articleSource} = orderComposition(lead);
     let labelHost = null;
     try { labelHost = new URL(label).hostname; } catch {}
     const orderValue = name => (lead.custom_fields_values || [])
@@ -82,7 +83,7 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
       .flatMap(f => f.values || []).map(v => v.value)
       .find(value => (typeof value === 'string' && value.trim()) || (typeof value === 'number' && Number.isSafeInteger(value)));
     const orderNumber = orderValue('ORDERID') ?? orderValue('Номер заказа');
-    return {id: lead.id, shipped: shippedStatuses.has(lead.status_id), statusId:lead.status_id, orderNumber: orderNumber == null ? null : String(orderNumber).trim(), deliveryService, createdAt: lead.created_at, pipelineId: lead.pipeline_id, packageWeight: packageWeight(lead), composition, hasLabel: Boolean(labelHost), labelHost};
+    return {id: lead.id, shipped: shippedStatuses.has(lead.status_id), statusId:lead.status_id, orderNumber: orderNumber == null ? null : String(orderNumber).trim(), deliveryService, createdAt: lead.created_at, pipelineId: lead.pipeline_id, packageWeight: packageWeight(lead), composition, articleSource, hasLabel: Boolean(labelHost), labelHost};
   }
   return {
     printCandidates: (from, sample = false) => serial(async () => {

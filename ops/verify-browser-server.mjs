@@ -39,3 +39,6 @@ for(const lead of freshMissing){
  }
 }
 console.log(JSON.stringify({productsValues:withProducts,shapes:[...productShapes].map(([key,count])=>({...JSON.parse(key),count}))}));
+
+const pending=data.items.filter(v=>!saved.shipped?.[v.id]&&!saved.browserPrinted?.[v.id]&&saved.jobs?.[v.id]?.status!=='printed');
+console.log(JSON.stringify({pending:pending.length,productsFallback:pending.filter(v=>v.articleSource==='products').length,remainingMissing:pending.filter(v=>!/\([^()]*\S[^()]*\)/.test(v.composition||'')).length}));
