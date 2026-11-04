@@ -155,3 +155,17 @@ test('all three completed delivery stages are archived, pending remains printabl
  await service.configure(credentials);await service.callback(params(service.start('session')),'session');
  assert.deepEqual((await service.printCandidates(0)).items.map(v=>v.shipped),[true,true,true,false]);
 });
+
+test('feedback stage never enters catalogs and direct item/label reads are blocked',async t=>{
+ const {service}=await fixture(t,{fetcher:async url=>{
+  if(url.endsWith('/oauth2/access_token'))return Response.json({access_token:'access',refresh_token:'refresh',expires_in:3600});
+  if(url.includes('/pipelines/'))return Response.json({_embedded:{statuses:[{id:55,name:'  Форма  обратной связи  '},{id:56,name:'Новый заказ'}]}});
+  if(url.includes('/leads/100'))return Response.json({id:100,pipeline_id:8604134,status_id:55,custom_fields_values:[]});
+  const page=new URL(url).searchParams.get('page');
+  return Response.json({_embedded:{leads:[{id:page==='1'?100:101,pipeline_id:8604134,status_id:page==='1'?55:56,custom_fields_values:[]}]},_links:page==='1'?{next:{}}:{}});
+ }});
+ await service.configure(credentials);await service.callback(params(service.start('session')),'session');
+ assert.deepEqual((await service.printCandidates(0)).items.map(v=>v.id),[101]);
+ await assert.rejects(service.printLabel(100),error=>error.status===409);
+ assert.deepEqual((await service.printCandidates(0,true)).items,[]);
+});

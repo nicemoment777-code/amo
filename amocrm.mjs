@@ -66,11 +66,12 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
     const unique=[...new Set(texts)];
     return unique.length===1?unique[0]:null;
   }
-  let shippedStatuses = new Set(), statusesAt = -Infinity;
+  let shippedStatuses = new Set(), feedbackStatuses = new Set(), statusesAt = -Infinity;
   async function loadStatuses() {
     if (now()-statusesAt<60000) return;
     const pipeline=await get("/api/v4/leads/pipelines/8604134");
     shippedStatuses=new Set((pipeline._embedded?.statuses||[]).filter(v=>['заказ отправлен','принято в сдэк','принят в сдэк','в пункте выдачи'].includes(v.name?.trim().toLowerCase().replace(/\s+/g,' '))).map(v=>v.id));
+    feedbackStatuses=new Set((pipeline._embedded?.statuses||[]).filter(v=>v.name?.trim().toLowerCase().replace(/\s+/g,' ')==='форма обратной связи').map(v=>v.id));
     statusesAt=now();
   }
   function printItem(lead) {
@@ -95,6 +96,7 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
         const data = await get('/api/v4/leads?' + query);
         const leads = data._embedded?.leads || [];
         for (const lead of leads) {
+          if(feedbackStatuses.has(lead.status_id))continue;
           for (const field of lead.custom_fields_values || []) names.add(field.field_name);
           items.push(printItem(lead));
         }
@@ -106,6 +108,7 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
       await loadStatuses();
       const lead = await get('/api/v4/leads/' + id);
       if (lead.pipeline_id !== 8604134) throw new Error('Заявка находится в другой воронке');
+      if(feedbackStatuses.has(lead.status_id))throw Object.assign(new Error('Заявки этапа «Форма обратной связи» исключены из приложения и печати.'),{status:409});
       return {item: printItem(lead), url: deliveryInfo(lead).label};
     }),
     status: () => ({account, redirectUri, configured: Boolean(stored.clientId && stored.clientSecret), connected: Boolean(stored.refreshToken), expiresAt: stored.expiresAt || null}),
