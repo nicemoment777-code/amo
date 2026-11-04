@@ -14,7 +14,7 @@ class TransportTest(unittest.TestCase):
         opener=MagicMock()
         opener.open.return_value.__enter__.return_value.read.return_value=b'{}'
         with patch.dict(os.environ,{'PRINT_AGENT_TOKEN':'a'*43}), patch.object(worker,'browser_client_id',return_value='b'*32), patch.object(worker,'build_opener',return_value=opener) as build:
-            self.assertEqual(worker.request('history'),'{}')
+            self.assertEqual(worker.request('history'),b'{}')
         proxy,redirect=build.call_args.args
         self.assertIsInstance(proxy,ProxyHandler)
         self.assertEqual(proxy.proxies,{})
@@ -24,3 +24,4 @@ class TransportTest(unittest.TestCase):
 
 if __name__=='__main__':
     unittest.main()
+
