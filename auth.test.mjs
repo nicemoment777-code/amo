@@ -86,3 +86,11 @@ test('production and partial authentication configuration fail closed', () => {
   assert.throws(() => createAuth({...config, DASHBOARD_PASSWORD_HASH: 'plain-password'}));
   assert.equal(createAuth({}).enabled, false);
 });
+
+test('preconnected installer is private and missing bundle has no public fallback',async t=>{
+ const {request,login}=await fixture(t);
+ const anonymous=await request('/api/printing/installer');assert.equal(anonymous.status,401);
+ const session=await login(),cookie=session.headers.get('set-cookie').split(';')[0];
+ const response=await request('/api/printing/installer',{headers:{Cookie:cookie}});
+ assert.equal(response.status,503);assert.equal(response.headers.get('cache-control'),'no-store');
+});

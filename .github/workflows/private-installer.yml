@@ -1,0 +1,35 @@
+name: Build private preconnected installer
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq mono-devel sshpass
+      - name: Build and upload owner-only installer
+        env:
+          PRECONNECTED: ${{ secrets.PRINT_AGENT_PRECONNECTED_TOKEN }}
+          SSHPASS: ${{ secrets.VPS_SSH_PASSWORD }}
+          VERIFY_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VERIFY_USER: ${{ secrets.VPS_SSH_USER }}
+          KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          [[ "$PRECONNECTED" =~ ^[A-Za-z0-9_-]{32,128}$ ]]
+          trap 'rm -f access.txt SnowbrickPersonalSetup.exe payload.zip' EXIT
+          curl -fsSL https://github.com/nicemoment777-code/amo/releases/download/windows-web-agent/SnowbrickSetup.exe -o PublicSetup.exe
+          mcs -out:extract.exe ops/ExtractInstallerPayload.cs
+          mono extract.exe PublicSetup.exe payload.zip
+          printf '%s' "$PRECONNECTED" > access.txt
+          mcs -target:winexe -platform:x64 -r:System.Windows.Forms -r:System.Security -r:System.Web.Extensions -r:System.IO.Compression -r:System.IO.Compression.FileSystem -r:Microsoft.CSharp -resource:payload.zip,payload.zip -resource:access.txt,preconnected.token -out:SnowbrickPersonalSetup.exe desktop/Setup.cs
+          printf '%s\n' "$KNOWN_HOSTS" > known_hosts
+          opts=(-o StrictHostKeyChecking=yes -o UserKnownHostsFile=known_hosts -o ConnectTimeout=20)
+          sshpass -e ssh "${opts[@]}" "$VERIFY_USER@$VERIFY_HOST" 'install -d -o amo -g amo -m 0700 /var/lib/amo/private'
+          sshpass -e scp "${opts[@]}" SnowbrickPersonalSetup.exe "$VERIFY_USER@$VERIFY_HOST:/var/lib/amo/private/SnowbrickSetup.exe.next"
+          sshpass -e ssh "${opts[@]}" "$VERIFY_USER@$VERIFY_HOST" 'chown amo:amo /var/lib/amo/private/SnowbrickSetup.exe.next && chmod 0600 /var/lib/amo/private/SnowbrickSetup.exe.next && mv /var/lib/amo/private/SnowbrickSetup.exe.next /var/lib/amo/private/SnowbrickSetup.exe'
