@@ -35,7 +35,8 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
           const url = new URL(result.url);
           if (url.protocol !== 'https:' || url.port || url.username || url.password || !labelHosts.includes(url.hostname)) return json(400, {error: 'Домен этикетки ещё не разрешён для печати'});
           const response = await labelDownload(url);
-          if (!response.ok) return json(502, {error: 'Не удалось получить этикетку'});
+          if(response.status===404)return json(409,{error:'Файл этикетки по ссылке amoCRM не найден (404). Обновите этикетку в amoCRM и повторите подготовку PDF.'});
+          if (!response.ok) return json(502, {error: 'Хранилище этикеток вернуло ошибку '+response.status+'. Попробуйте позже или обновите ссылку в amoCRM.'});
           const reader = response.body.getReader(); const chunks = []; let length = 0;
           try { while (true) { const {done, value} = await reader.read(); if (done) break; length += value.length; if (length > 10e6) throw new Error('Слишком большой файл этикетки'); chunks.push(value); } }
           finally { await reader.cancel(); }
