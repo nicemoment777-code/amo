@@ -60,6 +60,7 @@ class LabelSizeTest(unittest.TestCase):
                 self.assertGreater(details['fontPt'],0)
                 self.assertEqual(details['headerMm'],[70,15])
                 self.assertAlmostEqual(details['heightMm'],110,places=3)
+                self.assertAlmostEqual(float(PdfReader(target).pages[0].mediabox.height)/MM,110,places=3)
                 text=''.join(PdfReader(target).pages[0].extract_text().split())
                 for sku in skus:self.assertIn(sku,text)
 

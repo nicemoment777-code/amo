@@ -91,8 +91,8 @@ def prepare_label(source, target, composition, delivery_service=None, package_we
         low,high=0.001,12.0
         for _ in range(20):
             trial=(low+high)/2
-            _,height=layout(trial)
-            if height<=header_height-2*MM: low=trial
+            _,trial_height=layout(trial)
+            if trial_height<=header_height-2*MM: low=trial
             else: high=trial
         size=max(0.001,int(low*1000)/1000)
         paragraph,text_height=layout(size)
