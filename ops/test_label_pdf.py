@@ -49,6 +49,20 @@ class LabelSizeTest(unittest.TestCase):
             self.assertIn(sku,''.join(PdfReader(target).pages[0].extract_text().split()))
             self.assertGreaterEqual(details['fontPt'],12)
 
+    def test_long_sku_sets_shrink_below_twelve_without_changing_band(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source,target=Path(folder)/'source.pdf',Path(folder)/'out.pdf'
+            writer=PdfWriter();writer.add_blank_page(width=75*MM,height=95*MM);writer.write(source)
+            skus=['SKU_'+str(i)+'_'+'A'*35 for i in range(5)]
+            for service in ['cdek','yandex']:
+                details=prepare_label(source,target,'; '.join('('+sku+')' for sku in skus),service)
+                self.assertLess(details['fontPt'],12)
+                self.assertGreater(details['fontPt'],0)
+                self.assertEqual(details['headerMm'],[70,15])
+                self.assertAlmostEqual(details['heightMm'],110,places=3)
+                text=''.join(PdfReader(target).pages[0].extract_text().split())
+                for sku in skus:self.assertIn(sku,text)
+
     def test_landscape_fits_width_below_header(self):
         with tempfile.TemporaryDirectory() as folder:
             source, target = Path(folder) / 'source.pdf', Path(folder) / 'out.pdf'

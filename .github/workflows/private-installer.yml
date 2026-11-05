@@ -31,7 +31,8 @@ jobs:
           from pathlib import Path
           with zipfile.ZipFile('original-payload.zip') as source, zipfile.ZipFile('payload.zip','w',compression=zipfile.ZIP_DEFLATED) as target:
               for entry in source.infolist():
-                  content=Path('ops/print-agent.py').read_bytes() if entry.filename.endswith('/ops/print-agent.py') else source.read(entry)
+                  replacement=next((Path('ops')/name for name in ['print-agent.py','label_pdf.py'] if entry.filename.endswith('/ops/'+name)),None)
+                  content=replacement.read_bytes() if replacement else source.read(entry)
                   target.writestr(entry,content)
           PY
           printf '%s' "$PRECONNECTED" > access.txt

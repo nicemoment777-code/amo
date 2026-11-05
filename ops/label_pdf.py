@@ -80,7 +80,24 @@ def prepare_label(source, target, composition, delivery_service=None, package_we
         if fitted:
             if not include_weight: weight=None
             break
-    if not fitted: raise ValueError('Артикулы не помещаются в 70 × 15 мм при шрифте 12 pt')
+    if not fitted:
+        # Keep the approved band; find the largest smaller font that fits all SKUs.
+        markup=escape(composition)+('  <b>'+escape(weight)+'</b>' if weight else '')
+        def layout(font_size):
+            paragraph=Paragraph(markup,ParagraphStyle('header',fontName=font,fontSize=font_size,
+                leading=font_size*1.15,wordWrap='CJK',spaceBefore=0,spaceAfter=0))
+            _,height=paragraph.wrap(available_width,header_height)
+            return paragraph,height
+        low,high=0.001,12.0
+        for _ in range(20):
+            trial=(low+high)/2
+            _,height=layout(trial)
+            if height<=header_height-2*MM: low=trial
+            else: high=trial
+        size=max(0.001,int(low*1000)/1000)
+        paragraph,text_height=layout(size)
+        if text_height>header_height-2*MM:
+            raise ValueError('Не удалось разместить артикулы в верхней полосе')
     lines=round(text_height/(size*1.15))
     overlay = io.BytesIO()
     c = canvas.Canvas(overlay, pagesize=(width, height))
