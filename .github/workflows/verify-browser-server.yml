@@ -4,7 +4,7 @@ on:
     inputs:
       check:
         type: choice
-        options: [browser, feedback]
+        options: [browser, feedback, recovery]
         default: browser
 permissions:
   contents: read
@@ -17,7 +17,9 @@ jobs:
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
       - name: Read field-presence flags only
         env:
-          VERIFY_SCRIPT: ${{ inputs.check == 'feedback' && 'ops/verify-feedback.mjs' || 'ops/verify-browser-server.mjs' }}
+          VERIFY_SCRIPT: ${{ inputs.check == 'feedback' && 'ops/verify-feedback.mjs' || inputs.check == 'recovery' && 'ops/recover-unprinted.mjs' || 'ops/verify-browser-server.mjs' }}
+          RECOVERY_ID: ${{ secrets.PRINT_RECOVERY_ID }}
+          RECOVERY_AT: ${{ secrets.PRINT_RECOVERY_AT }}
           SSHPASS: ${{ secrets.VPS_SSH_PASSWORD }}
           VERIFY_HOST: ${{ secrets.VPS_SSH_HOST }}
           VERIFY_USER: ${{ secrets.VPS_SSH_USER }}
@@ -29,4 +31,4 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > known_hosts
           opts=(-o StrictHostKeyChecking=yes -o UserKnownHostsFile=known_hosts -o ConnectTimeout=20)
           sshpass -e scp "${opts[@]}" "$VERIFY_SCRIPT" "$VERIFY_USER@$VERIFY_HOST:/root/verify-browser-server.mjs"
-          sshpass -e ssh "${opts[@]}" "$VERIFY_USER@$VERIFY_HOST" "node /root/verify-browser-server.mjs"
+          sshpass -e ssh "${opts[@]}" "$VERIFY_USER@$VERIFY_HOST" "node /root/verify-browser-server.mjs '$RECOVERY_ID' '$RECOVERY_AT'"

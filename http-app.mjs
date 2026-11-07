@@ -138,6 +138,10 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
           res.writeHead(200,{'Content-Type':'application/vnd.microsoft.portable-executable','Content-Disposition':'attachment; filename="SnowbrickSetup.exe"','Cache-Control':'private, no-store'});return res.end(installer);
         }catch{return json(503,{error:'Персональный установщик ещё готовится. Повторите скачивание позже.'});}
       }
+      if(req.method==='POST'&&path==='/api/printing/recover'&&printDevices){
+        if(!auth.enabled||!session)return json(403,{error:'Войдите на сайт'});
+        return json(200,await printDevices.recoverForManualRetry(await readJson(req,2048)));
+      }
       if (req.method==='GET' && path==='/api/printing/history' && printDevices) {
         if (!auth.enabled || !session) return json(403,{error:'Войдите на сайт'});
         return json(200,printDevices.history());

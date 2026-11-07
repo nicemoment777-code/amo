@@ -95,6 +95,14 @@ export async function createPrintDevices(file, {now = Date.now} = {}) {
       await save({...data,events,jobs});
       return {ok:true};
     }),
+    recoverForManualRetry: body => serial(async()=>{
+      const id=validId(body.id),job=data.jobs[id];
+      if(body.confirmedNotPrinted!==true||!Number.isSafeInteger(body.expectedAt))throw new Error('Требуется подтверждение владельца и время резерва');
+      if(!job||job.status!=='claimed'||Math.floor(job.at/1000)!==body.expectedAt||data.shipped?.[id]||data.browserPrinted?.[id])throw new Error('Состояние заявки изменилось. Обновите журнал');
+      const recovery={at:now(),confirmedNotPrinted:true,previous:{...job},manualOnly:true};
+      await save({...data,jobs:{...data.jobs,[id]:{...job,status:'manual-retry'}},recoveries:{...data.recoveries,[id]:recovery}});
+      return {ok:true,manualOnly:true};
+    }),
     claim: (id, owner) => serial(async () => {
       id = validId(id);
       if (data.jobs[id] || data.shipped?.[id] || data.browserPrinted?.[id]) return {claimed: false};

@@ -84,3 +84,17 @@ test('owner archive cutoff is exclusive midnight Moscow and survives restart',as
  assert.equal((await restarted.claim(1,'other')).claimed,false);
  assert.equal(history.events.length,0);
 });
+
+test('owner can clear only the confirmed reservation for manual retry without enabling auto repeats',async t=>{
+ const dir=await mkdtemp(join(tmpdir(),'manual-recovery-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ const file=pathToFileURL(join(dir,'devices.json')),service=await createPrintDevices(file,{now:()=>100000});
+ await service.claim(1,'owner');await service.claim(2,'owner');
+ await assert.rejects(service.recoverForManualRetry({id:1,expectedAt:100,confirmedNotPrinted:false}));
+ await assert.rejects(service.recoverForManualRetry({id:1,expectedAt:99,confirmedNotPrinted:true}));
+ await service.recoverForManualRetry({id:1,expectedAt:100,confirmedNotPrinted:true});
+ assert.equal(service.history().uncertain['1'],undefined);assert.equal(service.history().printed['1'],undefined);
+ assert.ok(service.history().uncertain['2']);assert.equal((await service.claim(1,'owner')).claimed,false);
+ const restarted=await createPrintDevices(file);assert.equal((await restarted.claim(1,'owner')).claimed,false);
+ await restarted.complete(1,'owner');assert.equal(restarted.history().printed['1'].status,'submitted');
+ await assert.rejects(restarted.recoverForManualRetry({id:1,expectedAt:100,confirmedNotPrinted:true}));
+});
