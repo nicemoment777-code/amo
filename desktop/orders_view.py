@@ -145,7 +145,7 @@ class OrdersBoard(ttk.Frame):
         by=y+h-30; bh=24; bx=x+6
         show_reason=not item['confirmed'] and self.on_error is not None
         bw=w-12-(28 if show_reason else 0)
-        active=item['canPrint'] and self.enabled
+        active=self.enabled
         rounded(c,bx,by,bw,bh,6,fill='#ffffff' if active else '#dce2eb',outline='')
         px=bx+bw/2-8; py=by+6
         c.create_rectangle(px+3,py-2,px+13,py+3,outline=INK,width=1)

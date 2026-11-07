@@ -666,10 +666,6 @@ class App:
         try: actual_printer=self.worker.select_printer(item)
         except PrinterRoutingError as e: return self.note(str(e))
         if actual_printer not in self.printer_names: return self.note('Для артикула назначен принтер, который не установлен в Windows.')
-        repeat=item['confirmed'] or str(item['id']) in read_json(self.worker.DATA/'state.json',{}).get('uncertain',{})
-        prompt=f"{'Повторно отправить' if repeat else 'Отправить'} этикетку заказа {order_title(item)}?\n\nПринтер: {actual_printer}\nКоличество: 1 экземпляр."
-        if repeat: prompt+='\nПроверьте, нужен ли дополнительный экземпляр.'
-        if not messagebox.askyesno('Печать этикетки',prompt,parent=self.root): return
         if not self.operation_lock.acquire(False): return
         self.busy=True; self.board.set_enabled(False); self.note(f"Готовим этикетку заказа {order_title(item)}…")
         def work():
@@ -720,8 +716,7 @@ class App:
         if self.carrier.get() not in ('Яндекс','СДЭК'): return
         state=merge_history(self.worker.DATA,read_json(self.worker.DATA/'state.json',{}))
         items=self.delivery_items
-        ready=[v for v in items if v['canPrint'] and str(v['id']) not in state.get('uncertain',{})
-               and state.get('printed',{}).get(str(v['id']),{}).get('status')!='reserved-on-server']
+        ready=[v for v in items if v['canPrint']]
         if not ready: return self.note('Готовых этикеток нет. Проверьте причины на карточках заявок.')
         self.print_items(ready,self.carrier.get()+' доставка · все заявки выбранного периода',len(items)-len(ready),separate_articles=True)
     def print_items(self,items,context='',skipped=0,separate_delivery=False,separate_articles=False):
@@ -749,9 +744,6 @@ class App:
         if context: prompt=context+'\n\n'+prompt
         if skipped: prompt+=f'\n\nБез готовой этикетки или с неопределённой печатью: {skipped}. Эти заявки останутся в счётчике и не будут напечатаны.'
         state=merge_history(self.worker.DATA,read_json(self.worker.DATA/'state.json',{}))
-        if any(str(v['id']) in state.get('uncertain',{}) or state.get('printed',{}).get(str(v['id']),{}).get('status')=='reserved-on-server' for v in items):
-            prompt+='\n\nЕсть заявки с неопределённой или зарезервированной печатью. Сначала проверьте физические отпечатки и очереди других устройств: возможен дополнительный экземпляр.'
-        if not messagebox.askyesno('Печать выбранных этикеток',prompt,parent=self.root): return
         if not self.operation_lock.acquire(False): return
         self.busy=True; self.board.set_enabled(False); self.render()
         def submitted(key):

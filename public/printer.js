@@ -36,10 +36,10 @@ function renderDisabled(){
   $('refreshArticles').disabled=busy;$('refresh').disabled=busy;$('applyStart').disabled=busy;
   const unavailable=device==='browser'?(busy?'Подготовка PDF…':''):!online()?'Компьютер печати не на связи':busy||snapshot?.busy?'На компьютере выполняется другое действие':!verified?'Проверяем связь и историю печати':'';
   for(const [id,items] of [['printAll',visible],['printAllCdek',serviceBatch('cdek')],['printAllYandex',serviceBatch('yandex')]]){
-    const ready=items.filter(v=>v.canPrint).length,reason=unavailable||(!ready?'В текущем списке нет готовых этикеток':'');
+    const ready=items.filter(v=>v.hasLabel&&v.skus.length).length,reason=unavailable||(!ready?'В текущем списке нет готовых этикеток':'');
     $(id).disabled=!!reason;$(id).title=reason||`Печатать готовые этикетки с текущими фильтрами: ${ready}`;
   }
-  for(const b of document.querySelectorAll('.printicon,.archive-group-print'))b.disabled=busy||!printAvailable||b.dataset.unready==='true';
+  for(const b of document.querySelectorAll('.printicon,.archive-group-print'))b.disabled=busy||!printAvailable;
 }
 async function refresh(force=false){
   verified=false;renderDisabled();
@@ -175,20 +175,12 @@ async function openPrintedArchive(){
   await refresh(true);
 }
 async function preparePrint(items,mode,context){
-  if(device==='browser'){
-    const ready=orderedGroups(items.filter(v=>v.canPrint));if(!ready.length)throw Error('Нет готовых этикеток');
-    plan={browserIds:ready.map(v=>v.id)};const repeats=ready.filter(v=>v.confirmed).length;
-    $('confirmation').replaceChildren(node('h3',context),node('p',`Подготовить ${ready.length} этикеток для печати через браузер? Выберите в окне печати масштаб 100%. После печати подтвердите результат отдельной кнопкой.${repeats?' Уже напечатанных: '+repeats+'. Будут дополнительные экземпляры.':''}`));
-    $('confirmDialog').showModal();return;
-  }
-  const ready=orderedGroups(items.filter(v=>v.canPrint));
+  const ready=orderedGroups(mode==='selected'?items:items.filter(v=>v.hasLabel&&v.skus.length));
   if(!ready.length)throw Error('Готовых этикеток нет. Проверьте причины на карточках.');
-  const result=await command('plan',{ids:ready.map(v=>v.id),mode});plan=result.plan;
-  const parts=[node('h3',context),node('p',`Компьютер: ${devices.find(v=>v.id===device)?.name}. Напечатать ${result.count} этикеток — по одному экземпляру каждой заявки?`),...Object.entries(result.printers).map(([name,count])=>node('p',`${name}: ${count} шт.`))];
-  if(result.repeats)parts.push(node('p',`Уже отправлены: ${result.repeats}. Будут напечатаны дополнительные экземпляры.`,'warning'));
-  if(items.length!==ready.length)parts.push(node('p',`Без готовой этикетки или с неопределённой печатью: ${items.length-ready.length}. Они пропущены.`));
-  parts.push(node('p','Все этикетки и штрихкоды будут проверены до отправки. Неопределённые задания автоматически не повторяются.'));
-  $('confirmation').replaceChildren(...parts);$('confirmDialog').showModal();
+  const result=await command('plan',{ids:ready.map(v=>v.id),mode});
+  const sent=await command('print',{plan:result.plan});
+  notice(`Отправлено этикеток: ${sent.submitted}.`+(sent.failed?' Партия остановлена. Проверьте причину; автоматического повтора нет.':''),sent.failed);
+  selected.clear();render();
 }
 function fillSettings(){
   if(!snapshot)return;

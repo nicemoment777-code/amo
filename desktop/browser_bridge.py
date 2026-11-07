@@ -60,7 +60,7 @@ class BrowserBridge:
             blocked=str(item['id']) in state.get('uncertain',{}) or state.get('printed',{}).get(str(item['id']),{}).get('status')=='reserved-on-server'
             items.append({'id':item['id'],'orderNumber':item.get('orderNumber'),'createdAt':item.get('createdAt',0),
                 'deliveryService':item.get('deliveryService','unknown'),'hasLabel':bool(item.get('hasLabel')),'skus':skus,'colors':sku_color(skus),
-                'confirmed':confirmed,'statusText':status,'canPrint':bool(skus and item.get('hasLabel') and not blocked),
+                'confirmed':confirmed,'statusText':status,'canPrint':bool(skus and item.get('hasLabel')),
                 'reasons':error_reasons(item,state,routes,local['printer'],last,receipts,local['printers'])})
         return {**local,'items':items,'routes':routes,'autoPrint':auto_print_enabled(worker.DATA),
                 'journal':read_entries(worker.DATA),'at':int(time.time()),'version':1,
@@ -73,11 +73,11 @@ class BrowserBridge:
         if not isinstance(ids,list) or not ids or len(ids)>1000: raise ValueError('Выберите от 1 до 1000 заявок')
         ids=list(dict.fromkeys(str(int(i)) for i in ids))
         state=merge_history(self.worker.DATA,read_json(self.worker.DATA/'state.json',{}))
-        items=[]; printers={}; counts={}; repeats=0
+        items=[]; printers={}; counts={}; repeats=0; uncertain_count=0
         names=self.ui(lambda:list(self.app.printer_names))
         for key in ids:
             if key in state.get('uncertain',{}) or state.get('printed',{}).get(key,{}).get('status')=='reserved-on-server':
-                raise ValueError('Есть неподтверждённая печать. Проверьте очередь Windows и журнал.')
+                uncertain_count+=1
             item=json.loads(self.worker.request('item/'+key)); group_key(item)
             if not item.get('hasLabel'): raise ValueError('В партии есть заявка без этикетки')
             printer=self.worker.select_printer(item)
@@ -93,7 +93,7 @@ class BrowserBridge:
         self.plans={k:v for k,v in self.plans.items() if v['until']>time.time()}
         token=secrets.token_urlsafe(24)
         self.plans[token]={'items':items,'printers':printers,'mode':mode,'until':time.time()+300}
-        return {'plan':token,'count':len(items),'repeats':repeats,'printers':counts,'separators':separators,'groups':groups}
+        return {'plan':token,'count':len(items),'repeats':repeats,'uncertain':uncertain_count,'printers':counts,'separators':separators,'groups':groups}
 
     def print_plan(self,args):
         plan=self.plans.pop(args.get('plan'),None)
@@ -104,8 +104,6 @@ class BrowserBridge:
             state=merge_history(self.worker.DATA,read_json(self.worker.DATA/'state.json',{}))
             for item in plan['items']:
                 key=str(item['id'])
-                if key in state.get('uncertain',{}) or state.get('printed',{}).get(key,{}).get('status')=='reserved-on-server':
-                    raise ValueError('Печать не подтверждена. Проверьте очередь и журнал.')
                 fresh=json.loads(self.worker.request('item/'+key))
                 if group_key(fresh)!=group_key(item) or fresh.get('deliveryService')!=item.get('deliveryService') or self.worker.select_printer(fresh)!=plan['printers'][key] or not fresh.get('hasLabel'):
                     raise ValueError('Карточка или принтер изменились. Обновите и подтвердите партию ещё раз.')

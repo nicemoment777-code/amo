@@ -37,12 +37,14 @@ class BrowserBridgeTests(unittest.TestCase):
                 batch.assert_not_called()
                 with self.assertRaises(ValueError): bridge.print_plan({'plan':plan['plan']})
 
-    def test_uncertain_blocks_plan_without_touching_state(self):
+    def test_uncertain_allows_explicit_manual_plan_without_touching_state(self):
         with tempfile.TemporaryDirectory() as folder:
             bridge,_=self.setup_bridge(folder);path=Path(folder)/'state.json'
             text=json.dumps({'activatedAt':123,'printed':{},'uncertain':{'1':{'status':'submitting'}}});path.write_text(text)
-            with self.assertRaises(ValueError): bridge.plan({'ids':[1]})
-            self.assertEqual(path.read_text(),text);bridge.worker.prepare.assert_not_called()
+            plan=bridge.plan({'ids':[1]});self.assertEqual(plan['count'],1);self.assertEqual(plan['uncertain'],1)
+            with patch('print_actions._manual_batch_locked',return_value={'submitted':['1'],'failed':None}) as batch:
+                bridge.print_plan({'plan':plan['plan']});batch.assert_called_once()
+            self.assertEqual(path.read_text(),text);bridge.worker.prepare.assert_called_once()
 
 if __name__=='__main__': unittest.main()
 

@@ -65,8 +65,6 @@ def _manual_batch_locked(worker, items, printers, on_submitted=None, separate_de
         state=json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
         for item in ordered:
             key=str(item['id'])
-            if key in state.get('uncertain',{}) or state.get('printed',{}).get(key,{}).get('status')=='reserved-on-server':
-                raise ValueError('В партии есть неподтверждённая печать. Проверьте очередь и карточку заявки.')
             fresh=json.loads(worker.request('item/'+key))
             if delivery_service(fresh)!=delivery_service(item) or group_key(fresh)!=group_key(item):
                 raise ValueError('Доставка или артикулы изменились. Обновите и подтвердите партию ещё раз.')
