@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+trap 'printf "Deployment check failed at line %s\n" "$LINENO" >&2' ERR
 release=${1:?release SHA is required}
 [[ "$release" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid release SHA'; exit 1; }
 bundle="/tmp/snegostroy-$release.tgz"
@@ -43,7 +44,15 @@ if ! nginx -t; then
     echo 'Nginx validation failed; shared configuration restored'; exit 1
 fi
 systemctl reload nginx
-curl -fsS --max-time 15 https://snowbrick.ru/777/ | grep -q 'Конструктор\|конструктор'
+ready=false
+for attempt in {1..15}; do
+    if curl -fsS --max-time 5 https://snowbrick.ru/777/ -o "$root/verify-$release.html" && cmp -s "$root/verify-$release.html" "$target/dist/index.html"; then
+        ready=true
+        break
+    fi
+    sleep 1
+done
+[[ "$ready" == true ]] || { echo 'New route did not become ready'; exit 1; }
 curl -fsS --max-time 15 https://snowbrick.ru/777/app.js >/dev/null
 curl -fsS --max-time 15 https://snowbrick.ru/777/vendor/three.module.js >/dev/null
 after_pid=$(systemctl show amo.service --property=MainPID --value)
