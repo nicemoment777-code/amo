@@ -1,0 +1,41 @@
+name: Publish independent Snegostroy 777
+on:
+  push:
+    branches: [snegostroy-777]
+    paths: ['snegostroy/**', '.github/workflows/deploy-snegostroy.yml']
+permissions:
+  contents: read
+concurrency:
+  group: snegostroy-777
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Verify constructor geometry
+        working-directory: snegostroy
+        run: node --test tests/geometry.test.mjs
+      - name: Install runner SSH transport
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+      - name: Publish only the independent constructor
+        env:
+          VPS_SSH_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_SSH_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_SSH_PASSWORD: ${{ secrets.VPS_SSH_PASSWORD }}
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$VPS_SSH_HOST" == '194.58.102.218' ]]
+          [[ -n "$VPS_SSH_USER" && -n "$VPS_SSH_PASSWORD" && -n "$VPS_SSH_KNOWN_HOSTS" ]]
+          umask 077
+          printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > /tmp/snegostroy-known-hosts
+          opts=(-o UserKnownHostsFile=/tmp/snegostroy-known-hosts -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+          export SSHPASS="$VPS_SSH_PASSWORD"
+          tar -czf "/tmp/snegostroy-$GITHUB_SHA.tgz" -C snegostroy dist ops
+          sshpass -e scp "${opts[@]}" "/tmp/snegostroy-$GITHUB_SHA.tgz" snegostroy/ops/deploy-isolated.sh "$VPS_SSH_USER@$VPS_SSH_HOST:/tmp/"
+          sshpass -e ssh "${opts[@]}" "$VPS_SSH_USER@$VPS_SSH_HOST" "bash /tmp/deploy-isolated.sh '$GITHUB_SHA'"
