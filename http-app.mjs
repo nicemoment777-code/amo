@@ -155,7 +155,6 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
           if(preparingBrowser)return json(409,{error:'Подготовка PDF уже выполняется. Подождите.'});
           const body=await readJson(req,10000);
           if(!Array.isArray(body.ids)||!body.ids.length||body.ids.length>100||body.ids.some(v=>!/^\d{1,20}$/.test(String(v))))return json(400,{error:'Выберите от 1 до 100 заявок'});
-          const history=printDevices.history();if(body.ids.some(id=>history.uncertain[String(id)]&&!history.printed[String(id)]))return json(409,{error:'В партии есть неопределённое задание. Проверьте предыдущую печать.'});
           preparingBrowser=true;
           try{
             const items=[],contents=[];let totalBytes=0;
