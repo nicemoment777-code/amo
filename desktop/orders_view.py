@@ -46,11 +46,12 @@ class DatePicker:
         if self.on_select: self.on_select()
 
 class OrdersBoard(ttk.Frame):
-    def __init__(self, parent, on_print, on_select=None, on_error=None, on_copy=None):
+    def __init__(self, parent, on_print, on_select=None, on_error=None, on_copy=None, on_mark_printed=None, on_copy_number=None):
         super().__init__(parent)
         self.on_print = on_print; self.groups = []; self.hitboxes = []; self.enabled = True
         self.on_select=on_select; self.selection_mode=False; self.selected=set(); self.selection_boxes=[]
         self.on_error=on_error; self.error_boxes=[]
+        self.on_mark_printed=on_mark_printed; self.mark_boxes=[]; self.on_copy_number=on_copy_number; self.number_boxes=[]
         self.on_copy=on_copy; self.copy_boxes=[]
         self.canvas = tk.Canvas(self,bg=BG,highlightthickness=0,bd=0)
         self.scroll = ttk.Scrollbar(self,orient='vertical',command=self.canvas.yview)
@@ -72,12 +73,12 @@ class OrdersBoard(ttk.Frame):
     def set_selection(self, mode, selected):
         self.selection_mode=mode; self.selected=set(selected); self.draw()
     def draw(self):
-        c=self.canvas; c.delete('all'); self.hitboxes=[]; self.selection_boxes=[]; self.error_boxes=[]; self.copy_boxes=[]
+        c=self.canvas; c.delete('all'); self.mark_boxes=[]; self.number_boxes=[]; self.hitboxes=[]; self.selection_boxes=[]; self.error_boxes=[]; self.copy_boxes=[]
         measured_width=c.winfo_width()
         width=measured_width if measured_width>1 else 1040
         gap=6; left=8; columns=12
         if width<=2*left+columns*gap: return
-        cardw=(width-2*left-(columns-1)*gap)/columns; cardh=174; y=10
+        cardw=(width-2*left-(columns-1)*gap)/columns; cardh=242; y=10
         if not self.groups:
             c.create_text(width/2,110,text='Пока нет заказов',font=('Segoe UI',24,'bold'),fill=INK)
             c.create_text(width/2,154,text=self.empty,font=('Segoe UI',11),fill=MUTED)
@@ -119,10 +120,15 @@ class OrdersBoard(ttk.Frame):
         c.create_text(cx,cy,text='✓' if item['confirmed'] else '!',font=('Segoe UI',7,'bold'),fill='white')
         c.create_text(x+6,y+11,anchor='w',text=str(item['id']),font=('Segoe UI',6),fill=secondary)
         number=order_title(item); size=9
-        while size>6 and tkfont.Font(family='Segoe UI',size=size,weight='bold').measure(number)>w-12: size-=1
+        while size>6 and tkfont.Font(family='Segoe UI',size=size,weight='bold').measure(number)>w-34: size-=1
         digits=''.join(char for char in str(item.get('orderNumber') or item['id']) if char in '0123456789')
         c.create_text(x+w/2,y+30,text=digits[-4:],font=('Segoe UI',18,'bold'),fill=fg,tags='order-suffix')
-        c.create_text(x+w/2,y+51,text=number,font=('Segoe UI',size,'bold'),fill=fg)
+        c.create_text(x+(w-22)/2,y+51,text=number,font=('Segoe UI',size,'bold'),fill=fg)
+        if self.on_copy_number:
+            bx=x+w-23;by=y+42
+            rounded(c,bx,by,18,18,4,fill='white',outline='')
+            c.create_text(bx+9,by+9,text='⧉',font=('Segoe UI',11,'bold'),fill=INK)
+            self.number_boxes.append((bx,by,bx+18,by+18,item))
         sku='; '.join(item['skus']) or 'Без артикула'
         copy_width=22 if item['skus'] and self.on_copy else 0
         maxchars=max(5,int((w-12-copy_width)/6)); lines=[]; remainder=sku
@@ -138,10 +144,14 @@ class OrdersBoard(ttk.Frame):
             self.copy_boxes.append((bx,by,bx+19,by+23,item))
         carrier={'cdek':'СДЭК','yandex':'Яндекс','unknown':'Без доставки'}[delivery_service(item)]
         c.create_text(x+6,y+100,anchor='w',text=carrier,font=('Segoe UI',7,'bold'),fill=secondary)
-        date=datetime.fromtimestamp(item['createdAt'],MOSCOW).strftime('%d.%m %H:%M')
-        c.create_text(x+6,y+114,anchor='w',text=date,font=('Segoe UI',7),fill=fg)
-        status='Отправлено' if item['confirmed'] else ('К печати' if item['canPrint'] else 'Нет PDF/артикула')
-        c.create_text(x+6,y+128,anchor='w',text=status,font=('Segoe UI',6),fill=secondary)
+        date=datetime.fromtimestamp(item['createdAt'],MOSCOW) if item.get('createdAt',0)>0 else None
+        rounded(c,x+5,y+108,w-10,61,4,fill='white',outline='')
+        for offset,text in [(118,'Создано'),(138,date.strftime('%H:%M') if date else '—'),(158,date.strftime('%d.%m.%Y') if date else 'Нет даты')]:
+            c.create_text(x+w/2,y+offset,text=text,font=('Segoe UI',9,'bold'),fill=INK)
+        if not item['confirmed'] and self.on_mark_printed:
+            rounded(c,x+5,y+177,w-10,24,4,fill='#e2ffe9',outline='')
+            c.create_text(x+w/2,y+189,text='✓ Напечатано',font=('Segoe UI',7,'bold'),fill='#087233')
+            if self.enabled: self.mark_boxes.append((x+5,y+177,x+w-5,y+201,item))
         by=y+h-30; bh=24; bx=x+6
         show_reason=not item['confirmed'] and self.on_error is not None
         bw=w-12-(28 if show_reason else 0)
@@ -171,7 +181,14 @@ class OrdersBoard(ttk.Frame):
     def error_hit(self,event):
         x,y=self.canvas.canvasx(event.x),self.canvas.canvasy(event.y)
         return next((v[4] for v in self.error_boxes if v[0]<=x<=v[2] and v[1]<=y<=v[3]),None)
+    def extra_hit(self,event,boxes):
+        x,y=self.canvas.canvasx(event.x),self.canvas.canvasy(event.y)
+        return next((v[4] for v in boxes if v[0]<=x<=v[2] and v[1]<=y<=v[3]),None)
     def click(self,event):
+        mark=self.extra_hit(event,self.mark_boxes)
+        if mark and self.on_mark_printed: return self.on_mark_printed(mark)
+        number=self.extra_hit(event,self.number_boxes)
+        if number and self.on_copy_number: return self.on_copy_number(number)
         copy=self.copy_hit(event)
         if copy and self.on_copy: return self.on_copy(copy)
         error=self.error_hit(event)
@@ -181,7 +198,7 @@ class OrdersBoard(ttk.Frame):
         item=self.hit(event)
         if item: self.on_print(item)
     def motion(self,event):
-        self.canvas.configure(cursor='hand2' if self.copy_hit(event) or self.hit(event) or self.selection_hit(event) or self.error_hit(event) else '')
+        self.canvas.configure(cursor='hand2' if self.extra_hit(event,self.mark_boxes) or self.extra_hit(event,self.number_boxes) or self.copy_hit(event) or self.hit(event) or self.selection_hit(event) or self.error_hit(event) else '')
     def copy_hit(self,event):
         x,y=self.canvas.canvasx(event.x),self.canvas.canvasy(event.y)
         return next((v[4] for v in self.copy_boxes if v[0]<=x<=v[2] and v[1]<=y<=v[3]),None)

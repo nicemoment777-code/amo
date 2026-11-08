@@ -53,6 +53,8 @@ def sku_color(skus):
 
 def print_status(item_id, state, receipts=None):
     key = str(item_id)
+    if state.get('printed', {}).get(key, {}).get('status') == 'owner-marked':
+        return True, 'Отмечено владельцем как напечатанное'
     if key in state.get('uncertain', {}):
         return False, 'Печать не подтверждена'
     printed = state.get('printed', {}).get(key, {})

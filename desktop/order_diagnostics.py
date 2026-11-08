@@ -6,8 +6,12 @@ from printer_routing import choose_printer, PrinterRoutingError
 def error_reasons(item, state, routing, default_printer, last_run=None, receipts=None, printer_names=None, offline=False):
     key = str(item['id'])
     if print_status(item['id'], state, receipts)[0]:
+        if state.get('printed', {}).get(key, {}).get('status') == 'owner-marked':
+            return ['Владелец отметил эту этикетку как напечатанную отдельно.']
         return ['Отправка этой этикетки драйверу подтверждена. Физический отпечаток проверяется у принтера.']
     reasons = []
+    if key in state.get('preparationErrors', {}):
+        reasons.append(state['preparationErrors'][key]['message'])
     if key in state.get('uncertain', {}):
         reasons.append('Предыдущая отправка на печать осталась без подтверждения. Проверьте отпечаток и очередь Windows. Автоматического повтора не будет.')
     elif state.get('printed', {}).get(key, {}).get('status') == 'reserved-on-server':

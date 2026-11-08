@@ -10,19 +10,41 @@ def manual_print(worker, item_id, expected_printer=None):
     with worker.agent_lock():
         return _manual_print_locked(worker,item_id,expected_printer)
 
+class PreparationError(ValueError):
+    """No claim, receipt or driver call has happened."""
+
+def preparation_error(worker, key, error=None):
+    path=worker.DATA/'manual-preparation-errors.json'
+    errors=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+    if error is None: errors.pop(str(key),None)
+    else:
+        message='Не удалось подготовить этикетку: проверьте PDF, артикулы и назначения принтеров, затем повторите ручную печать.'
+        if getattr(error,'code',None)==404: message='Исходная этикетка недоступна (404). Обновите PDF в amoCRM и карточки заявки.'
+        errors[str(key)]={'at':int(time.time()),'type':type(error).__name__,'message':message}
+    worker.atomic_json(path,errors)
+
+def prepare_manual(worker,item_id,expected_printer=None,expected_service=None,expected_skus=None,variant='-manual'):
+    try:
+        item=json.loads(worker.request('item/'+str(int(item_id))))
+        group_key(item)
+        if expected_service is not None and delivery_service(item)!=expected_service:
+            raise ValueError('Доставка заявки изменилась. Обновите карточки.')
+        if expected_skus is not None and group_key(item)!=expected_skus:
+            raise ValueError('Артикулы заявки изменились. Обновите карточки.')
+        if not item.get('hasLabel'): raise ValueError('Нет этикетки')
+        printer=worker.select_printer(item)
+        if expected_printer is not None and printer!=expected_printer:
+            raise ValueError('Назначение принтера изменилось. Обновите карточку.')
+        _,image,details=worker.prepare(item,for_print=True,variant=variant)
+        preparation_error(worker,item_id)
+        return item,printer,image,details
+    except Exception as error:
+        preparation_error(worker,item_id,error)
+        raise PreparationError('Этикетка не подготовлена. Откройте «Причина» на карточке.') from error
+
 def _manual_print_locked(worker, item_id, expected_printer=None, expected_service=None, expected_skus=None):
     key=str(int(item_id))
-    item=json.loads(worker.request('item/'+key))
-    if expected_service is not None and delivery_service(item)!=expected_service:
-        raise ValueError('Доставка заявки изменилась. Обновите карточки и подтвердите партию ещё раз.')
-    if expected_skus is not None and group_key(item)!=expected_skus:
-        raise ValueError('Артикулы заявки изменились. Обновите карточки и подтвердите партию ещё раз.')
-    if not item.get('hasLabel') or not item.get('composition'):
-        raise ValueError('Не заполнены этикетка или состав заказа')
-    printer=worker.select_printer(item)
-    if expected_printer is not None and printer!=expected_printer:
-        raise ValueError('Назначение принтера изменилось. Обновите карточку и подтвердите печать ещё раз.')
-    _,image,details=worker.prepare(item,for_print=True,variant='-manual')
+    item,printer,image,details=prepare_manual(worker,item_id,expected_printer,expected_service,expected_skus)
     path=worker.DATA/'state.json'
     now=int(time.time())
     state=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {
@@ -50,27 +72,29 @@ def _manual_print_locked(worker, item_id, expected_printer=None, expected_servic
     return details
 
 def manual_batch(worker, items, printers, on_submitted=None, separate_delivery=False, separate_articles=False):
-    """One explicitly confirmed copy per selected order; stop on any failure."""
+    """One explicitly confirmed copy per selected order; skip preparation failures; stop on uncertain driver failure."""
     with worker.agent_lock():
         return _manual_batch_locked(worker,items,printers,on_submitted,separate_delivery,separate_articles)
 
 def _manual_batch_locked(worker, items, printers, on_submitted=None, separate_delivery=False, separate_articles=False):
     values=list({str(item['id']):item for item in items}.values())
-    ordered=grouped_print_order(values)
+    skipped=[]; valid=[]
+    for item in values:
+        key=str(item['id'])
+        try: group_key(item); valid.append(item)
+        except (ValueError,KeyError) as error:
+            preparation_error(worker,key,error);skipped.append(key)
+    ordered=grouped_print_order(valid)
     if separate_articles:
-        # Validate the entire confirmed carrier batch before any paper is spent.
-        if len({delivery_service(v) for v in ordered})!=1 or any(delivery_service(v)=='unknown' for v in ordered):
+        if len({delivery_service(v) for v in ordered})>1 or any(delivery_service(v)=='unknown' for v in ordered):
             raise ValueError('Печатать всё можно только для одной доставки.')
-        state_path=worker.DATA/'state.json'
-        state=json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
+        ready=[]
         for item in ordered:
-            key=str(item['id'])
-            fresh=json.loads(worker.request('item/'+key))
-            if delivery_service(fresh)!=delivery_service(item) or group_key(fresh)!=group_key(item):
-                raise ValueError('Доставка или артикулы изменились. Обновите и подтвердите партию ещё раз.')
-            if not fresh.get('hasLabel') or worker.select_printer(fresh)!=printers[key]:
-                raise ValueError('Этикетка или назначение принтера изменились. Обновите карточки.')
-            worker.prepare(fresh,for_print=True,variant='-batch-check')
+            try:
+                prepare_manual(worker,item['id'],printers.get(str(item['id'])),delivery_service(item),group_key(item),'-batch-check')
+                ready.append(item)
+            except PreparationError: skipped.append(str(item['id']))
+        ordered=grouped_print_order(ready)
     if separate_delivery:
         # Сохраняем утверждённый порядок групп внутри каждой доставки.
         ordered=sorted(ordered,key=lambda item:{'cdek':0,'yandex':1}.get(delivery_service(item),2))
@@ -87,10 +111,15 @@ def _manual_batch_locked(worker, items, printers, on_submitted=None, separate_de
                 _manual_print_locked(worker,item['id'],printers[key],service,group_key(item))
             else:
                 _manual_print_locked(worker,item['id'],printers[key],service if separate_delivery else None)
+        except PreparationError:
+            record['status']='skipped';skipped.append(key);worker.atomic_json(path,batch);continue
         except Exception as error:
             record.update(status='failed',errorType=type(error).__name__)
             failed=key; worker.atomic_json(path,batch); break
         record['status']='submitted'; submitted.append(key); worker.atomic_json(path,batch)
         if on_submitted: on_submitted(key)
     batch['status']='failed' if failed else 'submitted'; worker.atomic_json(path,batch)
-    return {'submitted':submitted,'failed':failed,'remaining':[str(v['id']) for v in batch['items'] if v['status']=='pending']}
+    result={'submitted':submitted,'failed':failed,'remaining':[str(v['id']) for v in batch['items'] if v['status']=='pending']}
+
+    if skipped: result['skipped']=skipped
+    return result

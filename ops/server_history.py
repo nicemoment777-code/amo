@@ -32,6 +32,9 @@ def sync_history(worker):
 
 
 def merge_history(folder,state):
+    try: errors=json.loads((folder/'manual-preparation-errors.json').read_text(encoding='utf-8'))
+    except FileNotFoundError: errors={}
+    state={**state,'preparationErrors':errors}
     # Не меняем state.json и не снимаем локальную неопределённую попытку.
     try: remote=json.loads((folder/'server-history.json').read_text(encoding='utf-8'))
     except FileNotFoundError: return state

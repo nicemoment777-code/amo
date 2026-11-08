@@ -98,3 +98,13 @@ test('owner can clear only the confirmed reservation for manual retry without en
  await restarted.complete(1,'owner');assert.equal(restarted.history().printed['1'].status,'submitted');
  await assert.rejects(restarted.recoverForManualRetry({id:1,expectedAt:100,confirmedNotPrinted:true}));
 });
+test('owner mark persists across devices without inventing driver acknowledgement',async t=>{
+ const dir=await mkdtemp(join(tmpdir(),'owner-mark-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ const file=pathToFileURL(join(dir,'devices.json')),service=await createPrintDevices(file,{now:()=>100000});
+ await service.claim(1,'device');await service.markOwnerPrinted(1);await service.markOwnerPrinted(2);
+ await assert.rejects(service.markOwnerPrinted('bad'));
+ const restarted=await createPrintDevices(file),history=restarted.history();
+ assert.equal(history.printed['1'].status,'owner-marked');assert.ok(history.uncertain['1']);
+ assert.equal(history.printed['2'].status,'owner-marked');assert.equal(history.events.length,0);
+ assert.equal((await restarted.claim(2,'other')).claimed,false);
+});

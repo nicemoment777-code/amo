@@ -128,3 +128,17 @@ test('two installations sharing legacy access cannot receive each other browser 
     assert.equal((await (await fetch(url+'/api/print-agent/browser/poll',{headers:headers(a)})).json()).command.action,'refresh');
   }finally{await new Promise(r=>server.close(r));await rm(folder,{recursive:true,force:true});}
 });
+test('manual printed mark requires login and same origin, and works without a PC',async()=>{
+ const history={printed:{},uncertain:{},events:[]};
+ const auth={enabled:true,origin:'https://example.test',session:req=>req.headers.cookie==='owner=valid'?{username:'owner'}:null};
+ const devices={markOwnerPrinted:async id=>{history.printed[id]={status:'owner-marked'};return {ok:true};},history:()=>history};
+ const server=createApp({sync:{},auth,printDevices:devices,amocrm:{}});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));const url='http://127.0.0.1:'+server.address().port;
+ const post=headers=>fetch(url+'/api/printing/mark-printed',{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify({id:42})});
+ try{
+  assert.equal((await post({Origin:auth.origin})).status,401);
+  assert.equal((await post({cookie:'owner=valid',Origin:'https://other.test'})).status,403);
+  assert.equal((await post({cookie:'owner=valid',Origin:auth.origin})).status,200);
+  assert.equal(history.printed['42'].status,'owner-marked');
+ }finally{await new Promise(r=>server.close(r));}
+});

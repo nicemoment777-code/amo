@@ -7,7 +7,7 @@ export function webCatalog(items,history) {
     if(!item.hasLabel)reasons.push('В заявке не заполнена этикетка доставки.');
     if(reserved)reasons.push('Отправка зарезервирована; подтверждение драйвера не получено. Проверьте очередь Windows.');
     return {id:item.id,orderNumber:item.orderNumber,createdAt:item.createdAt,deliveryService:item.deliveryService,
-      hasLabel:!!item.hasLabel,skus,colors:skuColors(skus),confirmed,shipped:!!item.shipped,statusText:confirmed?'Передано драйверу':reserved?'Печать не подтверждена':'Не напечатано',
+      hasLabel:!!item.hasLabel,skus,colors:skuColors(skus),confirmed,shipped:!!item.shipped,statusText:confirmed?(history.printed[key]?.status==='owner-marked'?'Отмечено владельцем как напечатанное':'Передано драйверу'):reserved?'Печать не подтверждена':'Не напечатано',
       canPrint:!!(skus.length&&item.hasLabel&&!reserved),reasons};
   });
 }

@@ -1,4 +1,4 @@
-import {day,stamp,title,formatCreatedAt,filterItems,articleCounts,orderedGroups,printedGroups,skuColors,orderColors} from '/printer-model.js';
+import {day,stamp,title,filterItems,articleCounts,orderedGroups,printedGroups,skuColors,orderColors} from '/printer-model.js';
 const $=id=>document.getElementById(id);
 const printerIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 9V3h12v6M6 17H3V9h18v8h-3M6 14h12v7H6z"/><path d="M17 11h2"/></svg>';
 const copyIcon='<svg viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 6V2h12v16h-3M2 6h12v16H2z"/></svg>';
@@ -14,7 +14,7 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function command(action,args={}){
   if(busy)throw Error('Дождитесь завершения текущего действия');
   if(!online())throw Error('Выберите подключённый компьютер печати');
-  busy=true;renderDisabled();notice(action==='plan'?'Проверяем партию перед подтверждением…':action==='print'?'Готовим и проверяем все этикетки. Затем отправляем на принтер…':'Выполняем действие на выбранном компьютере…');
+  busy=true;renderDisabled();notice(action==='plan'?'Проверяем этикетки и принтеры…':action==='print'?'Готовим и проверяем все этикетки. Затем отправляем на принтер…':'Выполняем действие на выбранном компьютере…');
   try{
     const {id}=await api('command',{device,action,args,requestId:crypto.randomUUID().replaceAll('-','')});
     for(let i=0;i<600;i++){
@@ -74,7 +74,7 @@ async function refresh(force=false){
   }
   for(const [id,v] of items){
     const uncertain=v.statusText==='Печать не подтверждена';
-    if(history.printed[id]&&(!uncertain||['crm-shipped','browser-confirmed','owner-date-archive'].includes(history.printed[id].status))){v.confirmed=true;v.statusText='Передано драйверу';}
+    if(history.printed[id]&&(!uncertain||['crm-shipped','browser-confirmed','owner-date-archive','owner-marked'].includes(history.printed[id].status))){v.confirmed=true;v.statusText=history.printed[id].status==='owner-marked'?'Отмечено владельцем как напечатанное':'Передано драйверу';}
     else if(history.uncertain[id]&&!history.printed[id]){v.confirmed=false;v.canPrint=false;v.statusText='Печать не подтверждена';}
   }
   const journal=[...(local?.journal||[])],known=new Set(journal.map(v=>[v.id,v.at,v.printer||''].join('|')));
@@ -128,8 +128,13 @@ function orderCard(item,archived=false){
       card.title=title(item);const digits=String(item.orderNumber||item.id).replace(/\D/g,'').slice(-4);
       const heading=node('div',undefined,'cardheading');
       const print=node('button',undefined,'printicon');print.innerHTML=printerIcon;print.title='Печатать одну этикетку';print.setAttribute('aria-label','Печатать этикетку '+title(item));print.disabled=!item.canPrint||busy;print.dataset.unready=String(!item.canPrint);print.onclick=action(async e=>{e.stopPropagation();await preparePrint([item],'selected',title(item));});
-      heading.append(node('div',digits,'digits'),print);card.append(heading,node('div',title(item),'number'));
-      const created=node('time','Создана: '+formatCreatedAt(item.createdAt)+(item.createdAt>0?' МСК':''),'created');
+      heading.append(node('div',digits,'digits'),print);card.append(heading);
+      const number=node('div',undefined,'number'),copyNumber=node('button',undefined,'copy');copyNumber.innerHTML=copyIcon;copyNumber.title='Скопировать номер заказа';copyNumber.setAttribute('aria-label','Скопировать номер заказа '+(item.orderNumber||item.id));
+      copyNumber.onclick=action(async e=>{e.stopPropagation();await navigator.clipboard.writeText(String(item.orderNumber||item.id));notice('Номер заказа скопирован.');});
+      number.append(node('span',title(item)),copyNumber);card.append(number);
+      const created=node('time',undefined,'created');
+      const date=item.createdAt>0?new Date(item.createdAt*1000):null;
+      created.append(node('span','Создано'),node('strong',date?date.toLocaleTimeString('ru-RU',{timeZone:'Europe/Moscow',hour:'2-digit',minute:'2-digit'}):'—'),node('strong',date?date.toLocaleDateString('ru-RU',{timeZone:'Europe/Moscow'}):'Дата не указана'));
       if(Number.isFinite(item.createdAt)&&item.createdAt>0)created.dateTime=new Date(item.createdAt*1000).toISOString();
       created.title='Дата и время появления заявки';card.append(created);
       const sku=node('div',undefined,'skuline');sku.append(node('span',item.skus.join('; ')||'Без артикула'));
@@ -137,7 +142,8 @@ function orderCard(item,archived=false){
       const buttons=node('div',undefined,'cardactions');
       if(item.confirmed){buttons.classList.add('printed');const mark=node('span','✓','statusmark ok');mark.title=item.statusText;buttons.append(mark,node('span','Напечатано','printed-label'));}
       else{const mark=node('span',/не.*подтвержден|нет подтверждения/i.test(item.statusText)?'Не подтверждено':'Не напечатано','statusmark pending');mark.title=item.statusText;card.append(mark);}
-      const reason=node('button','Причина');reason.onclick=e=>{e.stopPropagation();$('reasons').replaceChildren(node('h3',title(item)),...item.reasons.map(t=>node('p',t)));$('reasonDialog').showModal();};if(!item.confirmed)buttons.append(reason);if(item.hasLabel){const pdf=node('a','PDF');pdf.href='/api/browser/label/'+item.id;pdf.download='label-'+item.id+'.pdf';pdf.onclick=e=>e.stopPropagation();buttons.append(pdf);}
+      const reason=node('button','Причина');reason.onclick=e=>{e.stopPropagation();$('reasons').replaceChildren(node('h3',title(item)),...item.reasons.map(t=>node('p',t)));$('reasonDialog').showModal();};if(!item.confirmed){buttons.append(reason);const mark=node('button','✓ Напечатано','mark-printed');mark.title='Уже распечатали отдельно — перенести в архив';mark.disabled=busy;
+        mark.onclick=action(async e=>{e.stopPropagation();mark.disabled=true;try{const r=await fetch('/api/printing/mark-printed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:item.id})});if(!r.ok)throw Error('Не удалось сохранить отметку. Повторите после восстановления связи.');await refresh(true);notice('Заявка отмечена как напечатанная и перенесена в архив.');}finally{mark.disabled=false;}});buttons.append(mark);}if(item.hasLabel){const pdf=node('a','PDF');pdf.href='/api/browser/label/'+item.id;pdf.download='label-'+item.id+'.pdf';pdf.onclick=e=>e.stopPropagation();buttons.append(pdf);}
       card.append(buttons);
       if(selection&&!archived){card.tabIndex=0;card.setAttribute('role','checkbox');card.setAttribute('aria-checked',String(selected.has(String(item.id))));const toggle=()=>{if(!item.canPrint)return;const id=String(item.id);selected.has(id)?selected.delete(id):selected.add(id);render();};card.onclick=toggle;card.onkeydown=e=>{if(e.target===card&&[' ','Enter'].includes(e.key)){e.preventDefault();toggle();}};}
   return card;
@@ -175,11 +181,11 @@ async function openPrintedArchive(){
   await refresh(true);
 }
 async function preparePrint(items,mode,context){
-  const ready=orderedGroups(mode==='selected'?items:items.filter(v=>v.hasLabel&&v.skus.length));
+  const ready=orderedGroups(items);
   if(!ready.length)throw Error('Готовых этикеток нет. Проверьте причины на карточках.');
   const result=await command('plan',{ids:ready.map(v=>v.id),mode});
   const sent=await command('print',{plan:result.plan});
-  notice(`Отправлено этикеток: ${sent.submitted}.`+(sent.failed?' Партия остановлена. Проверьте причину; автоматического повтора нет.':''),sent.failed);
+  notice(`Отправлено этикеток: ${sent.submitted}.`+(sent.skipped?` Пропущено с ошибкой подготовки: ${sent.skipped}. Откройте «Причина» на карточках.`:'')+(sent.failed?' Партия остановлена. Проверьте причину; автоматического повтора нет.':''),sent.failed);
   selected.clear();render();
 }
 function fillSettings(){

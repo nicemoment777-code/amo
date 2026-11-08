@@ -220,7 +220,7 @@ class App:
         self.boards=[]
         for label in ['Все заявки','✓ Напечатанные','! Ошибки / не напечатаны']:
             page=ttk.Frame(self.tabs); self.tabs.add(page,text=label)
-            board=OrdersBoard(page,self.reprint,self.toggle_card,self.show_error,self.copy_article); board.pack(fill='both',expand=True)
+            board=OrdersBoard(page,self.reprint,self.toggle_card,self.show_error,self.copy_article,self.mark_printed,self.copy_number); board.pack(fill='both',expand=True)
             self.boards.append(board)
         self.tabs.select(2); self.board=self.boards[2]
         self.tabs.bind('<<NotebookTabChanged>>',self.tab_changed,add='+')
@@ -694,6 +694,22 @@ class App:
     def manual_print(self,item_id,expected_printer=None):
         from print_actions import manual_print
         manual_print(self.worker,item_id,expected_printer)
+    def mark_printed(self,item):
+        if self.busy: return self.note('Дождитесь завершения текущего действия.')
+        if not self.operation_lock.acquire(False): return
+        self.busy=True;self.render()
+        def work():
+            try:
+                self.worker.request('mark-printed',{'id':item['id']})
+                self.worker.sync_history()
+                self.ui(lambda:self.note('Заявка отмечена как напечатанная и перенесена в архив.'))
+            except Exception: self.ui(lambda:self.note('Не удалось сохранить отметку. Проверьте связь и повторите действие.'))
+            finally:
+                self.busy=False;self.operation_lock.release();self.ui(self.render)
+        self.background(work)
+    def copy_number(self,item):
+        self.root.clipboard_clear();self.root.clipboard_append(str(item.get('orderNumber') or item['id']))
+        self.note('Номер заказа скопирован.')
     def copy_article(self,item):
         text='; '.join(sku_set(item))
         if not text: return
@@ -724,11 +740,16 @@ class App:
         if self.printer_panel and self.printer_panel.dirty and not self.printer_panel.save(): return
         if not items: return
         self.worker.PRINTER=self.printer.get()
-        try:
-            printers={str(item['id']):self.worker.select_printer(item) for item in items}
-            if any(name not in self.printer_names for name in printers.values()):
-                return self.note('Один из назначенных принтеров не установлен в Windows.')
-        except PrinterRoutingError as e: return self.note(str(e))
+        from print_actions import preparation_error
+        printers={};valid=[]
+        for item in items:
+            try:
+                printer=self.worker.select_printer(item)
+                if printer not in self.printer_names: raise ValueError('Принтер не установлен')
+                printers[str(item['id'])]=printer;valid.append(item)
+            except Exception as error: preparation_error(self.worker,item['id'],error);skipped+=1
+        items=valid
+        if not items: self.render();return self.note('Этикетки не подготовлены. Проверьте причины на карточках.')
         by_printer={name:sum(v==name for v in printers.values()) for name in set(printers.values())}
         prompt=f'Напечатать выбранные этикетки: {len(items)} шт.?\nПо одному экземпляру каждой заявки.\n\n'+'\n'.join(f'{name}: {count}' for name,count in sorted(by_printer.items()))
         if separate_delivery:
@@ -738,7 +759,7 @@ class App:
                 prompt+='\n\nСначала СДЭК → затем Яндекс, без пустых этикеток.'
         if separate_articles:
             from print_order import group_key
-            count=len({group_key(item) for item in items})
+            count=len({tuple(sku_set(item)) for item in items})
             prompt+=f'\n\nГрупп артикулов: {count}. Группы печатаются подряд, без пустых этикеток. Заявка с несколькими артикулами печатается один раз. Фильтр артикула и вкладка статуса не ограничивают эту партию.'
         if any(v['confirmed'] for v in items): prompt+='\n\nСреди выбранных есть уже отправленные этикетки: будет дополнительный экземпляр.'
         if context: prompt=context+'\n\n'+prompt
@@ -756,6 +777,7 @@ class App:
                 result=manual_batch(self.worker,items,printers,submitted,separate_delivery=separate_delivery,separate_articles=separate_articles)
                 def completed():
                     text=f"Отправлено этикеток: {len(result['submitted'])}."
+                    if result.get('skipped') or skipped: text+=f" Пропущено с ошибкой подготовки: {len(result.get('skipped',[]))+skipped}. Откройте «Причина» на карточках."
                     if result['failed']: text+=' Партия остановлена из-за ошибки. Проверьте статус и очередь; автоматического повтора нет.'
                     self.note(text+self.history_warning())
                 self.ui(completed)
@@ -858,6 +880,7 @@ def self_test():
     root.update_idletasks()
     assert len(app.board.hitboxes)==8
     assert len(app.board.copy_boxes)==8
+    assert len(app.board.number_boxes)==8 and len(app.board.mark_boxes)==8
     with patch.object(root,'clipboard_clear') as clear, patch.object(root,'clipboard_append') as copy:
         app.copy_article({'composition':'Товар (LONG_ARTICLE_NOT_TRUNCATED); Другой (B)'})
         clear.assert_called_once(); copy.assert_called_once_with('B; LONG_ARTICLE_NOT_TRUNCATED')
@@ -894,7 +917,7 @@ def self_test():
     app.tabs.select(0); root.update(); app.render()
     assert app.all_time.get() and len(app.visible_cards)==9
     assert len(app.board.canvas.find_withtag('day-heading'))==2
-    assert len(app.board.hitboxes)==8
+    assert len(app.board.hitboxes)==9  # Ручная кнопка доступна и при отсутствии PDF.
     assert len({round(value[1]) for value in app.board.hitboxes[:4]})==1
     app.all_time.set(False); app.render(); assert len(app.visible_cards)==8
     app.all_time.set(True)

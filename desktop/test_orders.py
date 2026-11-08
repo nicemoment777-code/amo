@@ -165,6 +165,26 @@ class ManualPrintTests(unittest.TestCase):
             state=json.loads((w.DATA/'state.json').read_text())
             self.assertIn('2',state['uncertain']); self.assertNotIn('3',state['printed']); self.assertNotIn('item/3',w.calls)
 
+    def test_unavailable_pdf_in_middle_is_skipped_without_reservation_or_driver(self):
+        from urllib.error import HTTPError
+        with tempfile.TemporaryDirectory() as folder:
+            w=FakeWorker(folder)
+            original=w.prepare
+            def prepare(item,**kwargs):
+                if item['id']==2: raise HTTPError('https://invalid.example/private',404,'Not found',None,None)
+                return original(item,**kwargs)
+            w.prepare=prepare
+            result=manual_batch(w,[{'id':i,'createdAt':i,'composition':'(A)'} for i in (1,2,3)],dict.fromkeys(['1','2','3'],'Test printer'))
+            self.assertEqual(w.print_calls,[1,3]);self.assertEqual(result['skipped'],['2']);self.assertIsNone(result['failed'])
+            state=json.loads((w.DATA/'state.json').read_text())
+            self.assertNotIn('2',state['printed']);self.assertNotIn('2',state['uncertain'])
+            errors=(w.DATA/'manual-preparation-errors.json').read_text()
+            self.assertIn('404',errors);self.assertNotIn('invalid.example',errors)
+
+    def test_owner_mark_overrides_uncertain_display_without_removing_it(self):
+        state={'printed':{'1':{'status':'owner-marked'}},'uncertain':{'1':{'status':'submitting'}}}
+        self.assertTrue(print_status(1,state)[0]);self.assertIn('1',state['uncertain'])
+
     def test_batch_reports_each_success_for_immediate_badge_refresh(self):
         with tempfile.TemporaryDirectory() as folder:
             w=FakeWorker(folder); notices=[]

@@ -29,8 +29,8 @@ class ArticleBatchTests(unittest.TestCase):
             worker.select_printer=lambda v:printers[str(v['id'])]
             with patch('print_actions._manual_print_locked',side_effect=label):
                 if invalid:
-                    with self.assertRaises(ValueError): manual_batch(worker,items,printers,separate_articles=True)
-                    self.assertEqual(events,[]); return
+                    result=manual_batch(worker,items,printers,separate_articles=True)
+                    self.assertEqual(events,[1,3,2]);self.assertEqual(result['skipped'],['4']);return
                 result=manual_batch(worker,items+[items[0]],printers,separate_articles=True)
             batch=json.loads(next(Path(folder).glob('manual-batch-*.json')).read_text())
             return events,result,batch
@@ -47,7 +47,7 @@ class ArticleBatchTests(unittest.TestCase):
         self.assertEqual(result['failed'],'2')
         self.assertNotIn('separators',batch)
 
-    def test_changed_last_item_prevents_entire_batch(self): self.run_batch(invalid=True)
+    def test_changed_last_item_is_skipped_without_stopping_valid_items(self): self.run_batch(invalid=True)
 
     def test_carrier_article_counts_include_printed_and_dedupe_multi_sku(self):
         items=[{'id':1,'createdAt':1,'composition':'(A); (A); (B)','hasLabel':True,'deliveryService':'yandex'},

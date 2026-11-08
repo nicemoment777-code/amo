@@ -60,6 +60,11 @@ export async function createPrintDevices(file, {now = Date.now} = {}) {
       for(const id of ids)browserPrinted[validId(id)]={at:Math.floor(now()/1000),status:'browser-confirmed'};
       await save({...data,browserPrinted});
     }),
+    markOwnerPrinted: id => serial(async()=>{
+      id=validId(id);
+      await save({...data,ownerPrinted:{...data.ownerPrinted,[id]:{at:Math.floor(now()/1000),status:'owner-marked'}}});
+      return {ok:true};
+    }),
     markShipped: items => serial(async()=>{
       const shipped={...data.shipped};let changed=false;
       const cutoff=Date.parse('2026-10-31T00:00:00+03:00')/1000;
@@ -72,7 +77,7 @@ export async function createPrintDevices(file, {now = Date.now} = {}) {
       if(changed)await save({...data,shipped});
     }),
     history: () => ({
-      printed: {...data.browserPrinted,...data.shipped,...Object.fromEntries(Object.entries(data.jobs).filter(([,v])=>v.status==='printed').map(([id,v])=>[id,{at:Math.floor(v.at/1000),status:'submitted'}]))},
+      printed: {...data.browserPrinted,...data.shipped,...Object.fromEntries(Object.entries(data.jobs).filter(([,v])=>v.status==='printed').map(([id,v])=>[id,{at:Math.floor(v.at/1000),status:'submitted'}])),...data.ownerPrinted},
       uncertain: Object.fromEntries(Object.entries(data.jobs).filter(([,v])=>v.status==='claimed').map(([id,v])=>[id,{at:Math.floor(v.at/1000),status:'reserved-on-server'}])),
       events: Object.values(data.events)
     }),
@@ -98,14 +103,14 @@ export async function createPrintDevices(file, {now = Date.now} = {}) {
     recoverForManualRetry: body => serial(async()=>{
       const id=validId(body.id),job=data.jobs[id];
       if(body.confirmedNotPrinted!==true||!Number.isSafeInteger(body.expectedAt))throw new Error('Требуется подтверждение владельца и время резерва');
-      if(!job||job.status!=='claimed'||Math.floor(job.at/1000)!==body.expectedAt||data.shipped?.[id]||data.browserPrinted?.[id])throw new Error('Состояние заявки изменилось. Обновите журнал');
+      if(!job||job.status!=='claimed'||Math.floor(job.at/1000)!==body.expectedAt||data.shipped?.[id]||data.browserPrinted?.[id]||data.ownerPrinted?.[id])throw new Error('Состояние заявки изменилось. Обновите журнал');
       const recovery={at:now(),confirmedNotPrinted:true,previous:{...job},manualOnly:true};
       await save({...data,jobs:{...data.jobs,[id]:{...job,status:'manual-retry'}},recoveries:{...data.recoveries,[id]:recovery}});
       return {ok:true,manualOnly:true};
     }),
     claim: (id, owner) => serial(async () => {
       id = validId(id);
-      if (data.jobs[id] || data.shipped?.[id] || data.browserPrinted?.[id]) return {claimed: false};
+      if (data.jobs[id] || data.shipped?.[id] || data.browserPrinted?.[id] || data.ownerPrinted?.[id]) return {claimed: false};
       await save({...data, jobs: {...data.jobs, [id]: {owner, status: 'claimed', at: now()}}}); return {claimed: true};
     }),
     complete: (id, owner) => serial(async () => {

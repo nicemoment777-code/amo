@@ -77,6 +77,9 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
           if (req.method==='POST' && path.endsWith('/result')) return json(200,await browserControl.finish(browserOwner,await readJson(req,100000)));
           return json(405,{error:'Недопустимое действие'});
         }
+        if (printDevices && req.method==='POST' && path==='/api/print-agent/mark-printed') {
+          return json(200,await printDevices.markOwnerPrinted((await readJson(req,1024)).id));
+        }
         if (printDevices && path==='/api/print-agent/history') {
           if (req.method==='GET') return json(200,printDevices.history());
           if (req.method==='POST') return json(200,await printDevices.record((await readJson(req,100000)).entries,owner));
@@ -137,6 +140,10 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
         try{const installer=await readFile(installerFile);
           res.writeHead(200,{'Content-Type':'application/vnd.microsoft.portable-executable','Content-Disposition':'attachment; filename="SnowbrickSetup.exe"','Cache-Control':'private, no-store'});return res.end(installer);
         }catch{return json(503,{error:'Персональный установщик ещё готовится. Повторите скачивание позже.'});}
+      }
+      if(req.method==='POST'&&path==='/api/printing/mark-printed'&&printDevices){
+        if(!auth.enabled||!session)return json(403,{error:'Войдите на сайт'});
+        return json(200,await printDevices.markOwnerPrinted((await readJson(req,1024)).id));
       }
       if(req.method==='POST'&&path==='/api/printing/recover'&&printDevices){
         if(!auth.enabled||!session)return json(403,{error:'Войдите на сайт'});

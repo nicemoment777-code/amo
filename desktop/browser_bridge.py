@@ -60,7 +60,7 @@ class BrowserBridge:
             blocked=str(item['id']) in state.get('uncertain',{}) or state.get('printed',{}).get(str(item['id']),{}).get('status')=='reserved-on-server'
             items.append({'id':item['id'],'orderNumber':item.get('orderNumber'),'createdAt':item.get('createdAt',0),
                 'deliveryService':item.get('deliveryService','unknown'),'hasLabel':bool(item.get('hasLabel')),'skus':skus,'colors':sku_color(skus),
-                'confirmed':confirmed,'statusText':status,'canPrint':bool(skus and item.get('hasLabel')),
+                'confirmed':confirmed,'statusText':status,'canPrint':bool(skus and item.get('hasLabel') and str(item['id']) not in state.get('preparationErrors',{})),
                 'reasons':error_reasons(item,state,routes,local['printer'],last,receipts,local['printers'])})
         return {**local,'items':items,'routes':routes,'autoPrint':auto_print_enabled(worker.DATA),
                 'journal':read_entries(worker.DATA),'at':int(time.time()),'version':1,
@@ -73,45 +73,49 @@ class BrowserBridge:
         if not isinstance(ids,list) or not ids or len(ids)>1000: raise ValueError('Выберите от 1 до 1000 заявок')
         ids=list(dict.fromkeys(str(int(i)) for i in ids))
         state=merge_history(self.worker.DATA,read_json(self.worker.DATA/'state.json',{}))
-        items=[]; printers={}; counts={}; repeats=0; uncertain_count=0
+        from print_actions import preparation_error
+        items=[]; printers={}; counts={}; repeats=0; uncertain_count=0; skipped=[]
         names=self.ui(lambda:list(self.app.printer_names))
         for key in ids:
             if key in state.get('uncertain',{}) or state.get('printed',{}).get(key,{}).get('status')=='reserved-on-server':
                 uncertain_count+=1
-            item=json.loads(self.worker.request('item/'+key)); group_key(item)
-            if not item.get('hasLabel'): raise ValueError('В партии есть заявка без этикетки')
-            printer=self.worker.select_printer(item)
-            if printer not in names: raise ValueError('Назначенный принтер не установлен в Windows')
-            items.append(item); printers[key]=printer; counts[printer]=counts.get(printer,0)+1
+            try:
+                item=json.loads(self.worker.request('item/'+key)); group_key(item)
+                if not item.get('hasLabel'): raise ValueError('Нет этикетки')
+                printer=self.worker.select_printer(item)
+                if printer not in names: raise ValueError('Назначенный принтер не установлен в Windows')
+                items.append(item); printers[key]=printer; counts[printer]=counts.get(printer,0)+1
+            except Exception as error:
+                preparation_error(self.worker,key,error);skipped.append(key);continue
             repeats+=int(print_status(key,state,receipt_statuses(self.worker.DATA))[0])
         mode=args.get('mode','selected')
         if mode not in ('selected','article','carrier'): raise ValueError('Некорректный режим печати')
-        if mode=='carrier' and (len({v.get('deliveryService') for v in items})!=1 or items[0].get('deliveryService') not in ('cdek','yandex')):
+        if mode=='carrier' and items and (len({v.get('deliveryService') for v in items})!=1 or items[0].get('deliveryService') not in ('cdek','yandex')):
             raise ValueError('Выберите одну доставку')
         groups=len({group_key(v) for v in items})
         separators=0
         self.plans={k:v for k,v in self.plans.items() if v['until']>time.time()}
         token=secrets.token_urlsafe(24)
-        self.plans[token]={'items':items,'printers':printers,'mode':mode,'until':time.time()+300}
+        self.plans[token]={'items':items,'printers':printers,'mode':mode,'skipped':skipped,'until':time.time()+300}
         return {'plan':token,'count':len(items),'repeats':repeats,'uncertain':uncertain_count,'printers':counts,'separators':separators,'groups':groups}
 
     def print_plan(self,args):
         plan=self.plans.pop(args.get('plan'),None)
         if not plan or plan['until']<=time.time(): raise ValueError('Подтверждение истекло. Выберите партию ещё раз.')
-        # Every mode validates the WHOLE batch before the first driver call.
-        from print_actions import _manual_batch_locked
+        from print_actions import _manual_batch_locked, prepare_manual, PreparationError
+        skipped=list(plan['skipped']);ready=[]
         with self.worker.agent_lock():
-            state=merge_history(self.worker.DATA,read_json(self.worker.DATA/'state.json',{}))
             for item in plan['items']:
                 key=str(item['id'])
-                fresh=json.loads(self.worker.request('item/'+key))
-                if group_key(fresh)!=group_key(item) or fresh.get('deliveryService')!=item.get('deliveryService') or self.worker.select_printer(fresh)!=plan['printers'][key] or not fresh.get('hasLabel'):
-                    raise ValueError('Карточка или принтер изменились. Обновите и подтвердите партию ещё раз.')
-                self.worker.prepare(fresh,for_print=True,variant='-browser-check')
-            result=_manual_batch_locked(self.worker,plan['items'],plan['printers'],
+                try:
+                    prepare_manual(self.worker,key,plan['printers'][key],item.get('deliveryService'),group_key(item),'-browser-check')
+                    ready.append(item)
+                except PreparationError: skipped.append(key)
+            result=_manual_batch_locked(self.worker,ready,plan['printers'],
                 separate_delivery=plan['mode']=='article',separate_articles=plan['mode']=='carrier')
+        skipped.extend(result.get('skipped',[]))
         self.app.ui(self.app.render)
-        return {'submitted':len(result['submitted']),'failed':bool(result['failed'])}
+        return {'submitted':len(result['submitted']),'failed':bool(result['failed']),'skipped':len(set(skipped))}
 
     def execute(self,action,args):
         if action=='refresh':
