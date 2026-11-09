@@ -15,6 +15,6 @@ with tempfile.TemporaryDirectory() as directory:
     main(folder)
     output=PdfReader(folder/'batch.pdf')
     assert len(output.pages)==1
-    assert abs(float(output.pages[0].mediabox.height)-110*72/25.4)<.01
+    assert abs(float(output.pages[0].mediabox.height)-115*72/25.4)<.01
     assert 'TEST_BLUE' in output.pages[0].extract_text()
     print('BROWSER_PDF_SELF_TEST_OK')

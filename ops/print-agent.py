@@ -85,7 +85,7 @@ def prepare(item, for_print=False, variant=''):
     result = {code.text for code in result_codes}
     if not original or not original.issubset(result):
         raise RuntimeError('Проверка штрихкодов не пройдена; печать остановлена')
-    details['barcodeOverlap'] = any(min(code.position.top_left.y, code.position.top_right.y, code.position.bottom_left.y, code.position.bottom_right.y) < 15/25.4*203 for code in result_codes)
+    details['barcodeOverlap'] = any(min(code.position.top_left.y, code.position.top_right.y, code.position.bottom_left.y, code.position.bottom_right.y) < details['headerMm'][1]/25.4*203 for code in result_codes)
     atomic_json(prefix.with_suffix('.json'), {**details, 'barcodeCount': len(result)})
     if for_print and details['barcodeOverlap']:
         raise RuntimeError('Область состава перекрывает исходный штрихкод; печать остановлена')

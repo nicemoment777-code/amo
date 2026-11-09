@@ -2,7 +2,7 @@ import {day,stamp,title,filterItems,articleCounts,orderedGroups,printedGroups,sk
 const $=id=>document.getElementById(id);
 const printerIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 9V3h12v6M6 17H3V9h18v8h-3M6 14h12v7H6z"/><path d="M17 11h2"/></svg>';
 const copyIcon='<svg viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 6V2h12v16h-3M2 6h12v16H2z"/></svg>';
-let snapshot=null,devices=[],device=(localStorage.getItem('snowbrick-device')==='browser'?'':localStorage.getItem('snowbrick-device')||''),carrier='all',status='pending',query='',selected=new Set(),skuFilter=null,selection=false,range=null,busy=false,plan=null,hydratedDevice='',routesDraft=[];
+let snapshot=null,devices=[],device=(localStorage.getItem('snowbrick-device')==='browser'?'':localStorage.getItem('snowbrick-device')||''),carrier='all',status='pending',query='',selected=new Set(),skuFilter=null,selection=true,range=null,busy=false,plan=null,hydratedDevice='',routesDraft=[];
 let visible=[],deliveryItems=[],allPeriod=[],cloud=null,cloudAt=0,cloudFrom=null,verified=false;
 let archiveMode=false;
 let archiveCatalog=[],archiveLoaded=false,archiveLoading=false,archiveHistory={printed:{},uncertain:{}};
@@ -32,7 +32,7 @@ function paint(el,colors){el.style.background=colors?.[0]||'#e4e8ef';el.style.co
 function serviceBatch(service){return filterItems(snapshot?.items||[],{...currentPeriod(),query,skus:skuFilter,status,carrier:service});}
 function renderDisabled(){
   const available=online()&&verified&&!snapshot?.busy;const printAvailable=device==='browser'?verified:available;
-  for(const id of ['autoPrint','printSelected','saveRoutes','archive','openArchive','startup','refreshPrinters'])$(id).disabled=busy||!available;
+  for(const id of ['autoPrint','printSelected','saveRoutes','archive','openArchive','startup','refreshPrinters'])$(id).disabled=busy||!available||(id==='printSelected'&&!visible.some(v=>selected.has(String(v.id))));
   $('refreshArticles').disabled=busy;$('refresh').disabled=busy;$('applyStart').disabled=busy;
   const unavailable=device==='browser'?(busy?'Подготовка PDF…':''):!online()?'Компьютер печати не на связи':busy||snapshot?.busy?'На компьютере выполняется другое действие':!verified?'Проверяем связь и историю печати':'';
   for(const [id,items] of [['printAll',visible],['printAllCdek',serviceBatch('cdek')],['printAllYandex',serviceBatch('yandex')]]){
@@ -109,6 +109,7 @@ function render(){
   for(const b of $('carriers').querySelectorAll('button')){b.classList.toggle('active',carrier===b.dataset.carrier);b.setAttribute('aria-pressed',String(carrier===b.dataset.carrier));}
   visible=filtered.filter(v=>status==='all'||v.confirmed===(status==='printed'));
   $('selectionControls').hidden=!selection;$('selection').textContent=selection?'Завершить выбор':'Выбрать несколько';
+  $('printSelected').disabled=busy||!online()||!verified||!visible.some(v=>selected.has(String(v.id)));
   $('printSelected').textContent=`Печать выбранных (${visible.filter(v=>selected.has(String(v.id))).length})`;
   const orders=$('orders');orders.replaceChildren();
   if(!visible.length)orders.append(node('div','Заявок по выбранным условиям нет.','empty'));
@@ -128,7 +129,9 @@ function orderCard(item,archived=false){
       card.title=title(item);const digits=String(item.orderNumber||item.id).replace(/\D/g,'').slice(-4);
       const heading=node('div',undefined,'cardheading');
       const print=node('button',undefined,'printicon');print.innerHTML=printerIcon;print.title='Печатать одну этикетку';print.setAttribute('aria-label','Печатать этикетку '+title(item));print.disabled=!item.canPrint||busy;print.dataset.unready=String(!item.canPrint);print.onclick=action(async e=>{e.stopPropagation();await preparePrint([item],'selected',title(item));});
-      heading.append(node('div',digits,'digits'),print);card.append(heading);
+      const check=node('input');check.type='checkbox';check.className='order-check';check.setAttribute('aria-label','Выбрать заявку '+(item.orderNumber||item.id));check.checked=selected.has(String(item.id));check.disabled=busy;
+      check.onchange=()=>{const id=String(item.id);check.checked?selected.add(id):selected.delete(id);render();};
+      heading.append(check,node('div',digits,'digits'),print);card.append(heading);
       const number=node('div',undefined,'number'),copyNumber=node('button',undefined,'copy');copyNumber.innerHTML=copyIcon;copyNumber.title='Скопировать номер заказа';copyNumber.setAttribute('aria-label','Скопировать номер заказа '+(item.orderNumber||item.id));
       copyNumber.onclick=action(async e=>{e.stopPropagation();await navigator.clipboard.writeText(String(item.orderNumber||item.id));notice('Номер заказа скопирован.');});
       number.append(node('span',title(item)),copyNumber);card.append(number);
@@ -145,7 +148,7 @@ function orderCard(item,archived=false){
       const reason=node('button','Причина');reason.onclick=e=>{e.stopPropagation();$('reasons').replaceChildren(node('h3',title(item)),...item.reasons.map(t=>node('p',t)));$('reasonDialog').showModal();};if(!item.confirmed){buttons.append(reason);const mark=node('button','✓ Напечатано','mark-printed');mark.title='Уже распечатали отдельно — перенести в архив';mark.disabled=busy;
         mark.onclick=action(async e=>{e.stopPropagation();mark.disabled=true;try{const r=await fetch('/api/printing/mark-printed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:item.id})});if(!r.ok)throw Error('Не удалось сохранить отметку. Повторите после восстановления связи.');await refresh(true);notice('Заявка отмечена как напечатанная и перенесена в архив.');}finally{mark.disabled=false;}});buttons.append(mark);}if(item.hasLabel){const pdf=node('a','PDF');pdf.href='/api/browser/label/'+item.id;pdf.download='label-'+item.id+'.pdf';pdf.onclick=e=>e.stopPropagation();buttons.append(pdf);}
       card.append(buttons);
-      if(selection&&!archived){card.tabIndex=0;card.setAttribute('role','checkbox');card.setAttribute('aria-checked',String(selected.has(String(item.id))));const toggle=()=>{if(!item.canPrint)return;const id=String(item.id);selected.has(id)?selected.delete(id):selected.add(id);render();};card.onclick=toggle;card.onkeydown=e=>{if(e.target===card&&[' ','Enter'].includes(e.key)){e.preventDefault();toggle();}};}
+
   return card;
 }
 
@@ -223,7 +226,7 @@ const today=day(Date.now()/1000);$('from').value=today;$('to').value=today;
 for(const b of $('carriers').querySelectorAll('button'))b.onclick=()=>{carrier=b.dataset.carrier;skuFilter=null;selected.clear();render();};
 for(const b of $('statuses').querySelectorAll('button'))b.onclick=action(async()=>{if(b.dataset.status==='printed'){await openPrintedArchive();return;}status=b.dataset.status;render();await refresh(true);});
 $('history').onclick=()=>{carrier='all';skuFilter=null;render();};
-$('selection').onclick=()=>{selection=!selection;render();};$('selectAll').onclick=()=>{for(const v of visible)if(v.canPrint)selected.add(String(v.id));render();};$('clearSelection').onclick=()=>{selected.clear();render();};
+$('selection').onclick=()=>{selection=!selection;render();};$('selectAll').onclick=()=>{for(const v of visible)selected.add(String(v.id));render();};$('clearSelection').onclick=()=>{selected.clear();render();};
 $('resetArticles').onclick=()=>{skuFilter=null;render();};
 $('period').onclick=action(async()=>{const from=stamp($('from').value,$('fromTime').value),to=stamp($('to').value,$('toTime').value)+59;if(!Number.isFinite(from)||!Number.isFinite(to)||from>to)throw Error('Проверьте даты и время периода');range={from,to};render();if(from<stamp($('historyStart').value)&&online())await command('refresh',{from});await refresh(true);});
 $('today').onclick=()=>{const d=day(Date.now()/1000);$('from').value=d;$('to').value=d;$('fromTime').value='00:00';$('toTime').value='23:59';range={from:stamp(d),to:stamp(d,'23:59')+59};render();};

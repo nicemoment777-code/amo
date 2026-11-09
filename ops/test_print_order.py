@@ -1,5 +1,5 @@
 import unittest
-from print_order import grouped_print_order, article_text
+from print_order import grouped_print_order, article_text, product_count, printable_article_text
 
 def item(id, text, created=0):
     return {'id':id, 'composition':text, 'createdAt':created}
@@ -16,6 +16,18 @@ class PrintOrderTests(unittest.TestCase):
     def test_equal_groups_use_oldest_order_and_keep_group_together(self):
         values = [item(1,'(A)',10),item(2,'(B)',1),item(3,'(A)',2),item(4,'(B)',11)]
         self.assertEqual([v['id'] for v in grouped_print_order(values)], [2,4,3,1])
+
+    def test_product_count_ignores_years_and_external_quantity_text(self):
+        self.assertEqual(product_count('Товар (A_2027) - 99; Другой (2_Red-Blue_2027) - 3'),3)
+        self.assertEqual(product_count('(2-A-B); (2_C-D)'),4)
+        with self.assertRaises(ValueError): product_count('Без артикула')
+
+    def test_year_is_hidden_only_in_printed_text(self):
+        original='(2_Red-Blue_2027); (1_lime-2027); (A_2028)'
+        self.assertEqual(printable_article_text(original),'2_Red-Blue; 1_lime; A_2028')
+        self.assertIn('2027',article_text(original))
+        self.assertEqual(product_count(original),4)
+        self.assertEqual(grouped_print_order([item(1,original)])[0]['composition'],original)
 
     def test_missing_articles_are_not_silently_printed(self):
         with self.assertRaises(ValueError):

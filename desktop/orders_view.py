@@ -49,7 +49,7 @@ class OrdersBoard(ttk.Frame):
     def __init__(self, parent, on_print, on_select=None, on_error=None, on_copy=None, on_mark_printed=None, on_copy_number=None):
         super().__init__(parent)
         self.on_print = on_print; self.groups = []; self.hitboxes = []; self.enabled = True
-        self.on_select=on_select; self.selection_mode=False; self.selected=set(); self.selection_boxes=[]
+        self.on_select=on_select; self.selection_mode=True; self.selected=set(); self.selection_boxes=[]
         self.on_error=on_error; self.error_boxes=[]
         self.on_mark_printed=on_mark_printed; self.mark_boxes=[]; self.on_copy_number=on_copy_number; self.number_boxes=[]
         self.on_copy=on_copy; self.copy_boxes=[]
@@ -122,7 +122,7 @@ class OrdersBoard(ttk.Frame):
         number=order_title(item); size=9
         while size>6 and tkfont.Font(family='Segoe UI',size=size,weight='bold').measure(number)>w-34: size-=1
         digits=''.join(char for char in str(item.get('orderNumber') or item['id']) if char in '0123456789')
-        c.create_text(x+w/2,y+30,text=digits[-4:],font=('Segoe UI',18,'bold'),fill=fg,tags='order-suffix')
+        c.create_text(x+w/2+8,y+30,text=digits[-4:],font=('Segoe UI',18,'bold'),fill=fg,tags='order-suffix')
         c.create_text(x+(w-22)/2,y+51,text=number,font=('Segoe UI',size,'bold'),fill=fg)
         if self.on_copy_number:
             bx=x+w-23;by=y+42
@@ -167,11 +167,11 @@ class OrdersBoard(ttk.Frame):
             rounded(c,rx,by,22,bh,6,fill='white',outline='')
             c.create_text(rx+11,by+12,text='?',font=('Segoe UI',10,'bold'),fill=INK)
             self.error_boxes.append((rx,by,rx+22,by+bh,item))
-        if self.selection_mode:
+        if self.on_select:
             checked=str(item['id']) in self.selected
-            c.create_rectangle(x+5,y+4,x+18,y+17,fill=INK if checked else 'white',outline='white')
-            if checked: c.create_text(x+11,y+10,text='✓',font=('Segoe UI',8,'bold'),fill='white')
-            if self.enabled and item['canPrint']: self.selection_boxes.append((x+3,y+2,x+21,y+19,item))
+            c.create_rectangle(x+5,y+22,x+20,y+37,fill=INK if checked else 'white',outline='white')
+            if checked: c.create_text(x+12,y+29,text='✓',font=('Segoe UI',8,'bold'),fill='white')
+            if self.enabled: self.selection_boxes.append((x+3,y+20,x+23,y+39,item))
     def hit(self,event):
         x,y=self.canvas.canvasx(event.x),self.canvas.canvasy(event.y)
         return next((v[4] for v in self.hitboxes if v[0]<=x<=v[2] and v[1]<=y<=v[3]),None)

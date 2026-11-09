@@ -122,7 +122,7 @@ class App:
         except PrinterRoutingError as e:
             self.routes={'enabled':True,'routes':[]}; routing_error=str(e)
         self.card_filter=None; self.carrier=tk.StringVar(value='Все доставки'); self.search_query=''
-        self.selection_mode=False; self.selected_ids=set(); self.visible_cards=[]; self.article_pending={}
+        self.selection_mode=True; self.selected_ids=set(); self.visible_cards=[]; self.article_pending={}
         self.article_catalog=set(read_json(self.worker.DATA/'article-catalog.json',[]))
         self.catalog=read_json(self.worker.DATA/'order-catalog.json',[])
         self.worker.POPPLER = Path(os.environ['SNOWBRICK_POPPLER'])
@@ -149,7 +149,7 @@ class App:
         self.archive_status=tk.StringVar(value='PDF: постоянный архив на рабочем столе → Этикетки доставка')
         self.browse_actions=ttk.Frame(frame); self.browse_actions.pack(fill='x',pady=(0,10))
         self.select_button=ttk.Button(self.browse_actions,text='Выбрать несколько',command=self.toggle_selection)
-        self.select_button.pack(side='left')
+        # Выбор галочками доступен постоянно, отдельный режим не нужен.
         self.delivery_menu=RoundedNotebook(frame,delivery=True)
         self.delivery_menu.configure(height=1)
         self.delivery_menu_index=0
@@ -180,6 +180,7 @@ class App:
         self.history_calendar.pack(side='left',padx=(3,6))
         ttk.Button(self.browse_actions,text='Применить',command=self.apply_history_start).pack(side='left')
         self.batch_controls=ttk.Frame(frame)
+        self.batch_controls.pack(fill='x',pady=(0,10))
         ttk.Button(self.batch_controls,text='Выбрать все в списке',command=self.select_all_visible).pack(side='left')
         ttk.Button(self.batch_controls,text='Снять выделение',command=self.clear_selection).pack(side='left',padx=8)
         self.batch_button=ttk.Button(self.batch_controls,text='Печать выбранных (0)',style='Accent.TButton',command=self.print_selected)
@@ -291,7 +292,7 @@ class App:
         else: self.selected_ids.add(key)
         self.render()
     def select_all_visible(self):
-        self.selected_ids={str(v['id']) for v in self.visible_cards if v['canPrint']}; self.render()
+        self.selected_ids={str(v['id']) for v in self.visible_cards}; self.render()
     def clear_selection(self): self.selected_ids.clear(); self.render()
     def toggle_article_filter(self,sku):
         selected=set(self.card_filter or ())
@@ -401,7 +402,7 @@ class App:
         active=self.tabs.index('current'); self.board=self.boards[active]; groups=grouped_tabs[active]
         cards=[item for group in groups for item in group['items']]
         self.visible_cards=cards
-        self.selected_ids.intersection_update(str(v['id']) for v in cards if v['canPrint'])
+        self.selected_ids.intersection_update(str(v['id']) for v in cards)
         self.batch_button.configure(text=f'Печать выбранных ({len(self.selected_ids)})',state='normal' if self.selected_ids and not self.busy else 'disabled')
         self.refresh_article_buttons()
         if self.printer_panel: self.printer_panel.refresh_articles()
@@ -530,7 +531,7 @@ class App:
         ttk.Button(row,text='Остановить',command=self.stop).pack(side='left',padx=8)
         ttk.Button(row,text='Открыть журнал',command=lambda:os.startfile(str(self.worker.DATA))).pack(side='left')
         ttk.Button(row,text='Завершить модуль',command=self.exit_agent).pack(side='right')
-        ttk.Label(frame,text='СДЭК 1:1 · Яндекс 75 × 110 мм · сверху артикулы и вес в кг.\nПовторная печать — с карточки конкретного заказа.\nЗелёный значок подтверждает передачу драйверу, а не выход бумаги.',foreground=MUTED).pack(anchor='w',pady=18)
+        ttk.Label(frame,text='СДЭК 1:1 · Яндекс 75 × 115 мм · сверху количество, артикулы и вес в кг.\nПовторная печать — с карточки конкретного заказа.\nЗелёный значок подтверждает передачу драйверу, а не выход бумаги.',foreground=MUTED).pack(anchor='w',pady=18)
         self.log=tk.Text(frame,height=8,wrap='word',font=('Segoe UI',10),bd=0,padx=10,pady=10)
         self.log.pack(fill='both',expand=True); self.log.insert('end','\n'.join(self.settings_log)); self.log.configure(state='disabled')
     def history_warning(self):

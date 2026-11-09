@@ -1,6 +1,6 @@
-"""Создать PDF с областью состава заказа 70 x 15 мм без перекрытия штрихкодов."""
+"""Создать PDF с областью состава заказа 70 x 20 мм без перекрытия штрихкодов."""
 import io
-from print_order import article_text
+from print_order import printable_article_text, product_count
 from package_weight import kilograms,label_weight
 from pathlib import Path
 from pypdf import PdfReader, PdfWriter, Transformation
@@ -12,6 +12,11 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 MM = 72 / 25.4
+HEADER_HEIGHT_MM = 20
+YANDEX_HEIGHT_MM = 115
+HEADER_CONTENT_TOP_MM = 5  # Прежний отступ 1 мм + опустить на 4 мм.
+COUNT_FONT_SCALE = 0.75
+HEADER_CONTENT_HEIGHT_MM = 15  # Прежняя высота печати 18 мм минус 3 мм.
 
 def wrap(text, font, size, width):
     lines = []
@@ -34,7 +39,8 @@ def wrap(text, font, size, width):
     return lines
 
 def prepare_label(source, target, composition, delivery_service=None, package_weight=None):
-    composition = article_text(composition)
+    count = product_count(composition)
+    composition = printable_article_text(composition)
     font = 'LabelArial'
     if font not in pdfmetrics.getRegisteredFontNames():
         pdfmetrics.registerFont(TTFont(font, str(Path('C:/Windows/Fonts/arial.ttf') if Path('C:/Windows/Fonts/arial.ttf').exists() else Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))))
@@ -52,13 +58,13 @@ def prepare_label(source, target, composition, delivery_service=None, package_we
     except (ValueError,TypeError,NotImplementedError):
         weight=None
     page.transfer_rotation_to_content()
-    header_width, header_height = 70 * MM, 15 * MM
+    header_width, header_height = 70 * MM, HEADER_HEIGHT_MM * MM
     width = float(page.mediabox.width)
     height = float(page.mediabox.height) + header_height
     scale = 1
     offset_x = offset_y = 0
     if delivery_service == 'yandex':
-        width, height = 75 * MM, 110 * MM
+        width, height = 75 * MM, YANDEX_HEIGHT_MM * MM
         source_width, source_height = float(page.mediabox.width), float(page.mediabox.height)
         scale = min(width / source_width, (height - header_height) / source_height)
         offset_x = (width - source_width * scale) / 2
@@ -67,15 +73,25 @@ def prepare_label(source, target, composition, delivery_service=None, package_we
     if width_mm < 72 or height_mm < 50:
         raise ValueError('Недостаточный размер бумаги')
     x = (width - header_width) / 2
-    available_width = header_width - 2 * MM
+    # A separate left column keeps the full-height count out of the SKU text.
+    count_text=str(count)
+    cap_height=pdfmetrics.getFont('LabelArialBold').face.capHeight/1000
+    content_height=HEADER_CONTENT_HEIGHT_MM*MM
+    content_bottom=height-(HEADER_CONTENT_TOP_MM+HEADER_CONTENT_HEIGHT_MM)*MM
+    count_size=content_height/cap_height
+    max_count_width=24*MM
+    count_size=min(count_size,max_count_width/pdfmetrics.stringWidth(count_text,'LabelArialBold',1))*COUNT_FONT_SCALE
+    count_width=pdfmetrics.stringWidth(count_text,'LabelArialBold',count_size)
+    text_x=x+MM+count_width+2*MM
+    available_width=header_width-4*MM-count_width
     fitted=False
     for include_weight in ([True,False] if weight else [False]):
         markup=escape(composition)+('  <b>'+escape(weight)+'</b>' if include_weight else '')
-        for size in [20,18,16,14,12]:
+        for size in [value*15/18 for value in [20,18,16,14,12]]:
             paragraph=Paragraph(markup,ParagraphStyle('header',fontName=font,fontSize=size,
                 leading=size*1.15,wordWrap='CJK',spaceBefore=0,spaceAfter=0))
-            _,text_height=paragraph.wrap(available_width,header_height)
-            if text_height<=header_height-2*MM:
+            _,text_height=paragraph.wrap(available_width,content_height)
+            if text_height<=content_height:
                 fitted=True;break
         if fitted:
             if not include_weight: weight=None
@@ -86,25 +102,28 @@ def prepare_label(source, target, composition, delivery_service=None, package_we
         def layout(font_size):
             paragraph=Paragraph(markup,ParagraphStyle('header',fontName=font,fontSize=font_size,
                 leading=font_size*1.15,wordWrap='CJK',spaceBefore=0,spaceAfter=0))
-            _,height=paragraph.wrap(available_width,header_height)
+            _,height=paragraph.wrap(available_width,content_height)
             return paragraph,height
-        low,high=0.001,12.0
+        low,high=0.001,10.0
         for _ in range(20):
             trial=(low+high)/2
             _,trial_height=layout(trial)
-            if trial_height<=header_height-2*MM: low=trial
+            if trial_height<=content_height: low=trial
             else: high=trial
         size=max(0.001,int(low*1000)/1000)
         paragraph,text_height=layout(size)
-        if text_height>header_height-2*MM:
+        if text_height>content_height:
             raise ValueError('Не удалось разместить артикулы в верхней полосе')
     lines=round(text_height/(size*1.15))
     overlay = io.BytesIO()
     c = canvas.Canvas(overlay, pagesize=(width, height))
-    paragraph.drawOn(c,x+MM,height-(header_height+text_height)/2)
+    c.setFont('LabelArialBold',count_size)
+    count_ink_height=count_size*cap_height
+    c.drawString(x+MM,content_bottom+(content_height-count_ink_height)/2,count_text)
+    paragraph.drawOn(c,text_x,content_bottom+(content_height-text_height)/2)
     c.save()
     writer = PdfWriter()
-    # Yandex fits proportionally below the header on a 75 x 110 mm sheet.
+    # Yandex fits proportionally below the header on a 75 x 115 mm sheet.
     # Other carriers retain the source dimensions and scale.
     output = writer.add_blank_page(width=width, height=height)
     if delivery_service == 'yandex':
@@ -117,4 +136,4 @@ def prepare_label(source, target, composition, delivery_service=None, package_we
     Path(target).parent.mkdir(parents=True, exist_ok=True)
     with open(target, 'wb') as stream:
         writer.write(stream)
-    return {'widthMm':round(width_mm,4),'heightMm':round(height_mm,4),'headerMm':[70,15],'fontPt':size,'lines':lines,'sourceScaleX':scale,'sourceScaleY':scale,'layout':'top-band','weightIncluded':bool(weight)}
+    return {'widthMm':round(width_mm,4),'heightMm':round(height_mm,4),'headerMm':[70,HEADER_HEIGHT_MM],'headerContentTopMm':HEADER_CONTENT_TOP_MM,'headerContentHeightMm':HEADER_CONTENT_HEIGHT_MM,'productCount':count,'countFontScale':COUNT_FONT_SCALE,'countFontPt':count_size,'countWidthMm':count_width/MM,'fontPt':size,'lines':lines,'sourceScaleX':scale,'sourceScaleY':scale,'layout':'top-band','weightIncluded':bool(weight)}

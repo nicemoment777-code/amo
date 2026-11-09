@@ -39,3 +39,5 @@
 .install-module{display:inline-block;background:#158b52;color:#fff!important;border-radius:10px;padding:12px 16px;font-weight:700;text-decoration:none}
 
 .order .number{display:flex;align-items:center;justify-content:space-between;gap:4px}.order .number span{min-width:0;overflow-wrap:anywhere}.order .created{font-size:13px;font-weight:700;background:#fff;color:#111936;padding:5px 6px;line-height:1.4}.order .created>*{display:block}.order .created strong{font-size:15px}.order .cardactions{flex-wrap:wrap}.order .mark-printed{color:#087233;background:#e2ffe9;font-weight:800}
+
+.order .order-check{width:20px;height:20px;flex:none;margin:0;cursor:pointer;accent-color:#1155cf}.order .cardheading{gap:4px}.order .cardheading .digits{flex:1}.order.selected{box-shadow:0 0 0 3px #1155cf}#selectionControls{position:sticky;top:0;z-index:2;background:#f4f6fbf5;padding:8px 0}

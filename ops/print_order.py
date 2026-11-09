@@ -8,8 +8,21 @@ def articles(composition):
         raise ValueError('В составе заказа нет артикулов в круглых скобках')
     return values
 
+def product_count(composition):
+    """Каждое вхождение артикула — элемент, префикс 2_ / 2- — два."""
+    return sum(2 if re.match(r'^2[_-]',sku) else 1 for sku in articles(composition))
+
+
 def article_text(composition):
     return '; '.join(articles(composition))
+
+def printable_article_text(composition):
+    """Скрываем год только в печатной надписи; исходные SKU не меняем."""
+    values=[re.sub(r'[_\-\s]*2027$', '',sku).strip() for sku in articles(composition)]
+    if any(not value for value in values):
+        raise ValueError('После скрытия года в артикуле не осталось текста')
+    return '; '.join(values)
+
 
 def group_key(item):
     return tuple(sorted(set(articles(item['composition']))))
