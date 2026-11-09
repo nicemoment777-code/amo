@@ -141,6 +141,15 @@ export function createApp({sync, auth, webhookSecret, amocrm, printAgentHash = '
           res.writeHead(200,{'Content-Type':'application/vnd.microsoft.portable-executable','Content-Disposition':'attachment; filename="SnowbrickSetup.exe"','Cache-Control':'private, no-store'});return res.end(installer);
         }catch{return json(503,{error:'Персональный установщик ещё готовится. Повторите скачивание позже.'});}
       }
+      if(req.method==='GET'&&path==='/api/printing/report-items'&&amocrm){
+        if(!auth.enabled||!session)return json(403,{error:'Войдите на сайт'});
+        const query=new URL(req.url,'http://localhost').searchParams;
+        const from=Number(query.get('from')),to=Number(query.get('to'));
+        const scope=query.get('pipeline')||'8604134',pipelineId=scope==='all'?null:Number(scope);
+        if(!query.has('from')||!query.has('to')||!Number.isSafeInteger(from)||!Number.isSafeInteger(to)||from<0||to<from||to-from>366*86400||
+            (pipelineId!==null&&(!Number.isSafeInteger(pipelineId)||pipelineId<=0)))return json(400,{error:'Некорректный период или воронка'});
+        return json(200,await amocrm.reportItems(from,to,pipelineId));
+      }
       if(req.method==='POST'&&path==='/api/printing/mark-printed'&&printDevices){
         if(!auth.enabled||!session)return json(403,{error:'Войдите на сайт'});
         return json(200,await printDevices.markOwnerPrinted((await readJson(req,1024)).id));

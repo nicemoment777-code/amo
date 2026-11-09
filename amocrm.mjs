@@ -87,6 +87,21 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
     return {id: lead.id, shipped: shippedStatuses.has(lead.status_id), statusId:lead.status_id, orderNumber: orderNumber == null ? null : String(orderNumber).trim(), deliveryService, createdAt: lead.created_at, pipelineId: lead.pipeline_id, packageWeight: packageWeight(lead), composition, articleSource, hasLabel: Boolean(labelHost), labelHost};
   }
   return {
+    reportItems: (from, to, pipelineId = null) => serial(async () => {
+      const items = new Map();
+      for (let page = 1; page <= 40; page++) {
+        const query = new URLSearchParams({limit:'250',page:String(page),'order[created_at]':'asc','filter[created_at][from]':String(from)});
+        if (pipelineId !== null) query.set('filter[pipeline_id]',String(pipelineId));
+        const data=await get('/api/v4/leads?'+query);
+        for(const lead of data._embedded?.leads||[]){
+          if(!Number.isSafeInteger(lead.id)||!Number.isSafeInteger(lead.created_at)||lead.created_at<from||lead.created_at>to)continue;
+          if(pipelineId!==null&&lead.pipeline_id!==pipelineId)continue;
+          items.set(lead.id,{id:lead.id,createdAt:lead.created_at,pipelineId:lead.pipeline_id,...orderComposition(lead)});
+        }
+        if(!data._links?.next)return {items:[...items.values()]};
+      }
+      throw new Error('Слишком много заявок для отчёта. Уменьшите период.');
+    }),
     printCandidates: (from, sample = false) => serial(async () => {
       await loadStatuses();
       const items = []; const names = new Set();

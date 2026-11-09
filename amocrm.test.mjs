@@ -169,3 +169,32 @@ test('feedback stage never enters catalogs and direct item/label reads are block
  await assert.rejects(service.printLabel(100),error=>error.status===409);
  assert.deepEqual((await service.printCandidates(0,true)).items,[]);
 });
+test('report includes all stages and pipelines, deduplicates pages and returns only order composition',async t=>{
+ const paths=[];
+ const {service}=await fixture(t,{fetcher:async url=>{
+  if(url.endsWith('/oauth2/access_token'))return Response.json({access_token:'access',refresh_token:'refresh',expires_in:3600});
+  const parsed=new URL(url);paths.push(parsed);const page=parsed.searchParams.get('page');
+  const lead=(id,created,pipeline)=>({id,created_at:created,pipeline_id:pipeline,status_id:999,name:'Private recipient',custom_fields_values:[{field_name:'PRODUCTS',values:[{value:'(A)'}]},{field_name:'Phone',values:[{value:'private-phone'}]}]});
+  return Response.json({_embedded:{leads:page==='1'?[lead(1,5,8604134),lead(3,0,42)]:[lead(1,5,8604134),lead(2,6,42),lead(4,11,42)]},_links:page==='1'?{next:{href:'next'}}:{}});
+ }});
+ await service.configure(credentials);await service.callback(params(service.start('owner')),'owner');
+ const all=await service.reportItems(1,10);
+ assert.deepEqual(all.items.map(v=>v.id),[1,2]);assert.equal(all.items[0].composition,'(A)');
+ assert.ok(paths.every(v=>!v.searchParams.has('filter[pipeline_id]')));
+ assert.doesNotMatch(JSON.stringify(all),/Private recipient|private-phone/);
+ const selected=await service.reportItems(1,10,42);assert.deepEqual(selected.items.map(v=>v.id),[2]);
+ assert.equal(paths.at(-1).searchParams.get('filter[pipeline_id]'),'42');
+});
+
+test('report HTTP requires owner session and validates bounded dates',async()=>{
+ const calls=[];const auth={enabled:true,origin:'https://example.test',session:req=>req.headers.cookie==='owner=valid'?{}:null};
+ const server=createApp({sync:{},auth,amocrm:{reportItems:async(...args)=>{calls.push(args);return {items:[]};}}});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port;
+ try{
+  assert.equal((await fetch(base+'/api/printing/report-items?from=1&to=10&pipeline=all')).status,401);
+  const options={headers:{cookie:'owner=valid'}};
+  assert.equal((await fetch(base+'/api/printing/report-items?from=1&to=10&pipeline=all',options)).status,200);
+  assert.deepEqual(calls,[[1,10,null]]);
+  for(const query of ['from=1','from=10&to=1','from=0&to=999999999','from=1&to=10&pipeline=no'])assert.equal((await fetch(base+'/api/printing/report-items?'+query,options)).status,400);
+ }finally{await new Promise(r=>server.close(r));}
+});
