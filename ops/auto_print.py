@@ -36,3 +36,21 @@ def set_auto_print(folder, enabled, enabled_from=None):
         value.update(enabledFrom=math.ceil(moment),generation=uuid.uuid4().hex)
     temp.write_text(json.dumps(value),encoding='utf-8')
     os.replace(temp,path)
+
+
+PRINT_INTERVALS = (300, 600, 1800, 3600)
+
+def print_interval(folder):
+    try:
+        value=json.loads((Path(folder)/'print-timing.json').read_text(encoding='utf-8')).get('seconds')
+        if type(value) is int and value in PRINT_INTERVALS: return value
+    except (OSError,ValueError,AttributeError): pass
+    return 300
+
+def set_print_interval(folder, seconds):
+    if type(seconds) is not int or seconds not in PRINT_INTERVALS:
+        raise ValueError('Выберите 5, 10, 30 минут или 1 час')
+    folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
+    temp=folder/('print-timing-'+uuid.uuid4().hex+'.tmp')
+    temp.write_text(json.dumps({'seconds':seconds}),encoding='utf-8')
+    os.replace(temp,folder/'print-timing.json')

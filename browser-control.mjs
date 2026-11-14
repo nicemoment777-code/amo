@@ -15,7 +15,7 @@ export async function createBrowserControl(file, {now = Date.now} = {}) {
     await writeFile(temp,JSON.stringify(next),{mode:0o600});await chmod(temp,0o600);await rename(temp,file);
     commands=next; // Memory changes only after durable replacement.
   }
-  const actions = new Set(['refresh','articles','printers','settings','auto','startup','archive','openArchive','plan','print']);
+  const actions = new Set(['refresh','articles','printers','settings','auto','interval','startup','archive','openArchive','plan','print']);
   function device(id) {
     const value=devices.get(id);
     if (!value || now()-value.at>60000) throw new Error('Компьютер не на связи. Откройте обновлённую программу Windows.');

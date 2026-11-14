@@ -12,7 +12,7 @@ from server_history import merge_history
 from orders_model import read_json, sku_set, sku_color, print_status, receipt_statuses
 from order_diagnostics import error_reasons
 from printer_routing import load_routes, normalize_routes, PrinterRoutingError
-from auto_print import auto_print_enabled
+from auto_print import auto_print_enabled, print_interval, PRINT_INTERVALS
 from print_journal import read_entries
 from print_order import group_key
 
@@ -62,7 +62,7 @@ class BrowserBridge:
                 'deliveryService':item.get('deliveryService','unknown'),'hasLabel':bool(item.get('hasLabel')),'skus':skus,'colors':sku_color(skus),
                 'confirmed':confirmed,'statusText':status,'canPrint':bool(skus and item.get('hasLabel') and str(item['id']) not in state.get('preparationErrors',{})),
                 'reasons':error_reasons(item,state,routes,local['printer'],last,receipts,local['printers'])})
-        return {**local,'items':items,'routes':routes,'autoPrint':auto_print_enabled(worker.DATA),
+        return {**local,'items':items,'routes':routes,'autoPrint':auto_print_enabled(worker.DATA),'printInterval':print_interval(worker.DATA),
                 'journal':read_entries(worker.DATA),'at':int(time.time()),'version':1,
                 'standalone':'--panel-only' not in sys.argv,'loopActive':bool(app.thread and app.thread.is_alive())}
 
@@ -136,6 +136,11 @@ class BrowserBridge:
         if action=='printers': self.app.background(self.app.refresh_printers); return {'message':'Список принтеров обновляется'}
         if action=='archive': self.ui(lambda:self.app.start_archive(list(self.app.catalog))); return {'message':'Архивация запрошена'}
         if action=='openArchive': self.ui(self.app.open_archive); return {'message':'Архив открыт на выбранном компьютере'}
+        if action=='interval':
+            seconds=args.get('seconds')
+            if type(seconds) is not int or seconds not in PRINT_INTERVALS: raise ValueError('Некорректный интервал')
+            self.ui(lambda:self.app.change_interval(seconds))
+            return {'message':'Интервал автоматической печати сохранён'}
         if action in ('auto','startup'):
             if type(args.get('enabled')) is not bool: raise ValueError('Не задано состояние переключателя')
             if action=='auto':

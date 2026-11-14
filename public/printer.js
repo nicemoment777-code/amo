@@ -2,7 +2,7 @@ import {day,stamp,title,filterItems,articleCounts,orderedGroups,printedGroups,sk
 const $=id=>document.getElementById(id);
 const printerIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 9V3h12v6M6 17H3V9h18v8h-3M6 14h12v7H6z"/><path d="M17 11h2"/></svg>';
 const copyIcon='<svg viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 6V2h12v16h-3M2 6h12v16H2z"/></svg>';
-let snapshot=null,devices=[],device=(localStorage.getItem('snowbrick-device')==='browser'?'':localStorage.getItem('snowbrick-device')||''),carrier='all',status='pending',query='',selected=new Set(),skuFilter=null,selection=true,range=null,busy=false,plan=null,hydratedDevice='',routesDraft=[];
+let snapshot=null,devices=[],device=(localStorage.getItem('snowbrick-device')==='browser'?'':localStorage.getItem('snowbrick-device')||''),carrier='all',status='pending',query='',selected=new Set(),skuFilter=null,selection=true,range={from:Math.floor(Date.now()/1000)-172800,to:253402289999},busy=false,plan=null,hydratedDevice='',routesDraft=[];
 let visible=[],deliveryItems=[],allPeriod=[],cloud=null,cloudAt=0,cloudFrom=null,verified=false;
 let archiveMode=false;
 let archiveCatalog=[],archiveLoaded=false,archiveLoading=false,archiveHistory={printed:{},uncertain:{}};
@@ -32,7 +32,7 @@ function paint(el,colors){el.style.background=colors?.[0]||'#e4e8ef';el.style.co
 function serviceBatch(service){return filterItems(snapshot?.items||[],{...currentPeriod(),query,skus:skuFilter,status,carrier:service});}
 function renderDisabled(){
   const available=online()&&verified&&!snapshot?.busy;const printAvailable=device==='browser'?verified:available;
-  for(const id of ['autoPrint','printSelected','saveRoutes','archive','openArchive','startup','refreshPrinters'])$(id).disabled=busy||!available||(id==='printSelected'&&!visible.some(v=>selected.has(String(v.id))));
+  for(const id of ['autoPrint','printInterval','printSelected','saveRoutes','archive','openArchive','startup','refreshPrinters'])$(id).disabled=busy||!available||(id==='printSelected'&&!visible.some(v=>selected.has(String(v.id))));
   $('refreshArticles').disabled=busy;$('refresh').disabled=busy;$('applyStart').disabled=busy;
   const unavailable=device==='browser'?(busy?'Подготовка PDF…':''):!online()?'Компьютер печати не на связи':busy||snapshot?.busy?'На компьютере выполняется другое действие':!verified?'Проверяем связь и историю печати':'';
   for(const [id,items] of [['printAll',visible],['printAllCdek',serviceBatch('cdek')],['printAllYandex',serviceBatch('yandex')]]){
@@ -56,9 +56,9 @@ async function refresh(force=false){
   $('onboardingText').textContent=computer?`Нет связи с компьютером «${computer.name}». Запустите уже установленный модуль на нём. Повторно вводить ключи amoCRM не требуется.`:'amoCRM уже подключена на сервере: ключи и IP вводить не нужно. Для принтеров нового компьютера один раз установите модуль Windows и подтвердите этот компьютер.';
   if(local&&hydratedDevice!==device){
     const date=local.historyStart?.split('.').reverse().join('-');if(/^\d{4}-\d{2}-\d{2}$/.test(date||''))$('historyStart').value=date;
-    hydratedDevice=device;range=null;skuFilter=null;selected.clear();
+    hydratedDevice=device;skuFilter=null;selected.clear();
   }
-  const from=Math.min(currentPeriod().from,stamp($('historyStart').value));
+  const from=currentPeriod().from;
   if(force||!cloud||cloudFrom!==from||Date.now()-cloudAt>60000){
     cloud=await api('catalog?from='+Math.floor(from));cloudAt=Date.now();cloudFrom=from;
   }
@@ -82,7 +82,7 @@ async function refresh(force=false){
   journal.sort((a,b)=>(b.at||0)-(a.at||0));
   snapshot={printers:[],printer:'',articles:[],routes:{enabled:false,routes:[]},startup:false,autoPrint:false,...local,
     items:[...items.values()],journal,connection:local?.connection||'amoCRM и общая история · сервер',archive:local?.archive||'Архив PDF доступен на компьютере печати'};
-  $('connection').textContent=snapshot.connection;$('autoPrint').checked=snapshot.autoPrint;
+  $('connection').textContent=snapshot.connection;$('autoPrint').checked=snapshot.autoPrint;if(document.activeElement!==$('printInterval'))$('printInterval').value=String(snapshot.printInterval||300);
   $('archiveStatus').textContent=snapshot.archive;$('startup').checked=snapshot.startup;
   if(!$('settingsDialog').open)fillSettings();
   render();renderDisabled();
@@ -222,7 +222,7 @@ function renderJournal(){
   const table=node('table'),head=node('thead'),hr=node('tr');for(const name of ['Время МСК','Заявка','Артикулы','Принтер','Режим','Результат'])hr.append(node('th',name));head.append(hr);table.append(head);const body=node('tbody');let previous='';
   for(const v of entries){const d=v.at?day(v.at):'unknown';if(d!==previous){const tr=node('tr',undefined,'journalday'),td=node('td',(d==='unknown'?'Дата не сохранена':d.split('-').reverse().join('.')));td.colSpan=6;tr.append(td);body.append(tr);previous=d;}const tr=node('tr',undefined,v.status==='submitted'?'':'uncertain');for(const value of [v.at?new Date(v.at*1000).toLocaleTimeString('ru-RU',{timeZone:'Europe/Moscow'}):'—',title(v),(v.skus||[]).join('; '),v.printer||'Не записан',v.mode==='manual'?'Ручная':'Авто',v.status==='submitted'?'Передано драйверу':'Нет подтверждения'])tr.append(node('td',value));body.append(tr);}table.append(body);$('journal').replaceChildren(table);
 }
-const today=day(Date.now()/1000);$('from').value=today;$('to').value=today;
+const today=day(Date.now()/1000);$('from').value=day(Date.now()/1000-172800);$('to').value=today;$('fromTime').value=new Date(Date.now()-172800000).toLocaleTimeString('ru-RU',{timeZone:'Europe/Moscow',hour:'2-digit',minute:'2-digit'});
 for(const b of $('carriers').querySelectorAll('button'))b.onclick=()=>{carrier=b.dataset.carrier;skuFilter=null;selected.clear();render();};
 for(const b of $('statuses').querySelectorAll('button'))b.onclick=action(async()=>{if(b.dataset.status==='printed'){await openPrintedArchive();return;}status=b.dataset.status;render();await refresh(true);});
 $('history').onclick=()=>{carrier='all';skuFilter=null;render();};
@@ -243,6 +243,7 @@ $('printAllCdek').onclick=action(()=>preparePrint(serviceBatch('cdek'),'carrier'
 $('printAllYandex').onclick=action(()=>preparePrint(serviceBatch('yandex'),'carrier','Яндекс доставка · текущие фильтры'));
 $('printSelected').onclick=action(()=>preparePrint(visible.filter(v=>selected.has(String(v.id))),'selected','Выбранные заявки'));
 $('confirmPrint').onclick=action(async()=>{const token=plan;plan=null;$('confirmDialog').close();if(!token)return;if(token.browserIds){await prepareBrowserPdf(token.browserIds);return;}const result=await command('print',{plan:token});notice(`Отправлено этикеток: ${result.submitted}.`+(result.failed?' Партия остановлена. Проверьте очередь и журнал, автоматического повтора нет.':''),result.failed);selected.clear();render();});
+$('printInterval').onchange=action(()=>command('interval',{seconds:Number($('printInterval').value)}));
 $('autoPrint').onchange=action(async()=>{const enabled=$('autoPrint').checked;$('autoPrint').checked=!!snapshot?.autoPrint;if(!confirm(`${enabled?'Включить':'Выключить'} автоматическую печать на компьютере «${devices.find(v=>v.id===device)?.name}»?${enabled?' Будут печататься только заявки, созданные после этого включения. Прежние заявки автоматически не печатаются.':''}`))return;await command('auto',{enabled});});
 $('useBrowserPrinting').onclick=action(async()=>{device='browser';localStorage.setItem('snowbrick-device',device);await refresh();fillSettings();});
 $('browserSettingsPrint').onclick=action(async()=>{$('settingsDialog').close();await preparePrint(visible,'all','Печать на этом компьютере');});

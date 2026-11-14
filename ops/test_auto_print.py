@@ -17,6 +17,22 @@ def worker(folder):
 
 
 class AutoPrintTests(unittest.TestCase):
+    def test_timing_preserves_gate_and_history(self):
+        from auto_print import print_interval,set_print_interval
+        with tempfile.TemporaryDirectory() as folder:
+            data=Path(folder);set_auto_print(data,True,enabled_from=100)
+            gate=(data/'auto-print.json').read_bytes()
+            (data/'state.json').write_text('{"printed":{"1":{}},"uncertain":{"2":{}}}')
+            history=(data/'state.json').read_bytes()
+            self.assertEqual(print_interval(data),300)
+            for seconds in (300,600,1800,3600):
+                set_print_interval(data,seconds);self.assertEqual(print_interval(data),seconds)
+                self.assertEqual((data/'auto-print.json').read_bytes(),gate)
+                self.assertEqual((data/'state.json').read_bytes(),history)
+            for seconds in (True,0,301,'600'):
+                with self.assertRaises(ValueError):set_print_interval(data,seconds)
+            (data/'print-timing.json').write_text('broken');self.assertEqual(print_interval(data),300)
+
     def test_missing_corrupt_and_disabled_switch_never_requests_or_changes_history(self):
         with tempfile.TemporaryDirectory() as folder:
             w=worker(folder); state=w.DATA/'state.json'; original=b'{"activatedAt":17,"printed":{"1":{}},"uncertain":{"2":{}}}'

@@ -56,7 +56,7 @@ from printer_panel import PrinterPanel
 from server_history import merge_history
 from rounded_controls import RoundedNotebook, RoundedArticleCards, RoundedButton
 from order_diagnostics import error_reasons
-from auto_print import auto_print_enabled, set_auto_print
+from auto_print import auto_print_enabled, set_auto_print, print_interval, set_print_interval
 from pdf_archive import archive_directory, archive_labels
 from orders_model import VISIBLE_FROM
 from print_journal import read_entries
@@ -143,6 +143,11 @@ class App:
         ttk.Button(title,text='Настройки',command=self.settings).pack(side='right')
         ttk.Checkbutton(title,text='Автоматическая печать',variable=self.auto_print,command=self.toggle_auto_print).pack(side='right',padx=16)
         ttk.Label(title,text='СНЕГОСТРОЙ',foreground=MUTED,font=('Segoe UI',11,'bold')).pack(side='right',padx=24)
+        self.interval_labels={'5 минут':300,'10 минут':600,'30 минут':1800,'1 час':3600}
+        self.interval_choice=tk.StringVar(value=next(k for k,v in self.interval_labels.items() if v==print_interval(self.worker.DATA)))
+        timing=ttk.Combobox(title,textvariable=self.interval_choice,values=list(self.interval_labels),state='readonly',width=10)
+        timing.pack(side='right',padx=8)
+        timing.bind('<<ComboboxSelected>>',lambda _:self.change_interval(self.interval_labels[self.interval_choice.get()]))
         self.connection=tk.StringVar(value='Соединение с amoCRM: ещё не проверено')
         self.connection_label=ttk.Label(title,textvariable=self.connection,foreground=MUTED,font=('Segoe UI',9),wraplength=350)
         self.connection_label.pack(side='left',padx=24)
@@ -168,7 +173,7 @@ class App:
             button=RoundedButton(self.delivery_controls,text=label,command=lambda v=value:self.carrier.set(v),color=color,foreground=ink)
             button.pack(side='left',padx=(0,6)); self.delivery_buttons[value]=button
         self.carrier.trace_add('write',lambda *_:self.carrier_changed())
-        self.all_time=tk.BooleanVar(value=True)
+        self.all_time=tk.BooleanVar(value=smoke)
         self.history_start=tk.StringVar(value=self.config.get('historyStart','01.10.2026'))
         try: self.history_start_timestamp()
         except ValueError: self.history_start.set('01.10.2026')
@@ -187,8 +192,8 @@ class App:
         self.batch_button.pack(side='left')
         filters=ttk.Frame(frame); filters.pack(fill='x')
         now=datetime.now(MOSCOW); today=now.strftime('%d.%m.%Y')
-        self.day_from=tk.StringVar(value=today); self.day_to=tk.StringVar(value=today)
-        self.time_from=tk.StringVar(value='00:00'); self.time_to=tk.StringVar(value='23:59')
+        self.day_from=tk.StringVar(value=(now-timedelta(days=2)).strftime('%d.%m.%Y') if not smoke else today); self.day_to=tk.StringVar(value=today)
+        self.time_from=tk.StringVar(value=(now-timedelta(days=2)).strftime('%H:%M') if not smoke else '00:00'); self.time_to=tk.StringVar(value='23:59')
         for label,day,clock in [('С',self.day_from,self.time_from),('По',self.day_to,self.time_to)]:
             ttk.Label(filters,text=label).pack(side='left',padx=(0,8))
             ttk.Entry(filters,textvariable=day,width=11).pack(side='left')
@@ -256,7 +261,7 @@ class App:
             except Exception: self.note('Не удалось прочитать или обновить панель. Проверьте локальный журнал; история не сбрасывалась.')
         show_request=HOME/'show-window.request'
         if not self.smoke and show_request.exists():
-            show_request.unlink(missing_ok=True); self.root.deiconify(); self.root.lift()
+            show_request.unlink(missing_ok=True); self.root.deiconify(); self.root.lift(); self.open_recent()
         self.root.after(70,self.pump)
     def background(self,callback): threading.Thread(target=callback,daemon=True).start()
     def known_skus(self):
@@ -344,6 +349,13 @@ class App:
         except OSError:
             if not automatic: self.note('Сейчас выполняется печать. Дождитесь завершения и сохраните назначение ещё раз.')
         return False
+    def open_recent(self):
+        now=datetime.now(MOSCOW);start=now-timedelta(days=2)
+        self.all_time.set(False);self.card_filter=None;self.selected_ids.clear()
+        self.day_from.set(start.strftime('%d.%m.%Y'));self.time_from.set(start.strftime('%H:%M'))
+        self.day_to.set(now.strftime('%d.%m.%Y'));self.time_to.set('23:59')
+        self.tabs.select(2);self.reload(True)
+
     def period(self):
         if self.all_time.get(): return self.history_start_timestamp(), 253402289999
         start,end=parse_period(self.day_from.get(),self.time_from.get(),self.day_to.get(),self.time_to.get())
@@ -493,7 +505,7 @@ class App:
         ttk.Label(archive_page,text='Заявки с 01.10.2026 · по дням поступления · московское время',font=('Segoe UI',12,'bold')).pack(anchor='w',pady=(0,20))
         ttk.Label(archive_page,textvariable=self.archive_status,wraplength=850).pack(anchor='w',pady=(0,16))
         ttk.Label(archive_page,text='Рабочий стол → Этикетки доставка → СДЭК / Яндекс\nPDF сохраняются постоянно, независимо от автопечати.\nПри печати сначала используется местный PDF, при его отсутствии — загрузка из amoCRM.',wraplength=850).pack(anchor='w',pady=(0,20))
-        ttk.Button(archive_page,text='Открыть папку PDF',command=self.open_archive).pack(anchor='w')
+        RoundedButton(archive_page,text='Открыть папку PDF',command=self.open_archive,color='#df253b',foreground='white').pack(anchor='w')
         journal_page=ttk.Frame(self.settings_tabs,padding=16)
         self.settings_tabs.add(journal_page,text='Журнал печати')
         journal_top=ttk.Frame(journal_page); journal_top.pack(fill='x',pady=(0,10))
@@ -629,13 +641,21 @@ class App:
             if not resume: set_auto_print(self.worker.DATA,True,enabled_from=enabled_from)
         except OSError:
             self.auto_print.set(auto_print_enabled(self.worker.DATA)); return self.note('Не удалось сохранить включение автоматической печати.')
-        self.running=True; self.auto_print.set(True); self.stop_event.clear(); self.save(); self.note('Автоматическая печать включена. Печатаются только заявки, созданные после включения. Проверка каждые 5 минут.')
+        self.running=True; self.auto_print.set(True); self.stop_event.clear(); self.save(); self.note('Автоматическая печать включена. Печатаются только заявки, созданные после включения. Интервал проверки выбирается рядом с переключателем.')
         if '--panel-only' in sys.argv: return
         def loop():
             while not self.stop_event.is_set():
                 self.pass_once()
-                if self.stop_event.wait(300): break
+                finished=time.monotonic()
+                while not self.stop_event.is_set() and time.monotonic()-finished<print_interval(self.worker.DATA):
+                    self.stop_event.wait(1)
         self.thread=threading.Thread(target=loop,daemon=True); self.thread.start()
+    def change_interval(self,seconds):
+        set_print_interval(self.worker.DATA,seconds)
+        if hasattr(self,'interval_choice'):
+            self.interval_choice.set(next(k for k,v in self.interval_labels.items() if v==seconds))
+        self.note('Интервал автоматической печати сохранён.')
+
     def stop(self):
         try: set_auto_print(self.worker.DATA,False)
         except OSError:
