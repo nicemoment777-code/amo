@@ -17,10 +17,19 @@ class PrintOrderTests(unittest.TestCase):
         values = [item(1,'(A)',10),item(2,'(B)',1),item(3,'(A)',2),item(4,'(B)',11)]
         self.assertEqual([v['id'] for v in grouped_print_order(values)], [2,4,3,1])
 
-    def test_product_count_ignores_years_and_external_quantity_text(self):
-        self.assertEqual(product_count('Товар (A_2027) - 99; Другой (2_Red-Blue_2027) - 3'),3)
+    def test_product_count_multiplies_explicit_quantity_and_ignores_years(self):
+        self.assertEqual(product_count('Товар (A_2027) - 99; Другой (2_Red-Blue_2027) - 3'),105)
         self.assertEqual(product_count('(2-A-B); (2_C-D)'),4)
         with self.assertRaises(ValueError): product_count('Без артикула')
+
+    def test_same_colour_quantities_and_price_formats(self):
+        for amount in (1,2,3,4,10):
+            for suffix in (f', шт - {amount}',f', шт - {amount}x6800 = 68000',f' - {amount};'):
+                self.assertEqual(product_count('(1_red_2027)'+suffix),amount)
+                self.assertEqual(product_count('(2_Red-Blue_2027)'+suffix),2*amount)
+        self.assertEqual(product_count('(A), шт - 2; Другой товар (B), шт - 3'),5)
+        self.assertEqual(product_count('(A); цена 2027 рублей'),1)
+        with self.assertRaises(ValueError):product_count('(A), шт - 0')
 
     def test_year_is_hidden_only_in_printed_text(self):
         original='(2_Red-Blue_2027); (1_lime-2027); (A_2028)'

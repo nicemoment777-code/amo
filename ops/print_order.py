@@ -9,8 +9,20 @@ def articles(composition):
     return values
 
 def product_count(composition):
-    """Каждое вхождение артикула — элемент, префикс 2_ / 2- — два."""
-    return sum(2 if re.match(r'^2[_-]',sku) else 1 for sku in articles(composition))
+    """Количество строк товара умножается на число элементов в артикуле."""
+    matches=list(re.finditer(r'\(([^()]*)\)',composition))
+    if not matches or any(not m[1].strip() for m in matches):
+        raise ValueError('В составе заказа нет артикулов')
+    count=0
+    for index,match in enumerate(matches):
+        sku=match[1].strip()
+        tail=composition[match.end():matches[index+1].start() if index+1<len(matches) else len(composition)]
+        # Quantity must immediately follow this SKU; prices, years and names are not counts.
+        quantity=re.match(r'\s*,?\s*(?:шт\.?\s*)?[-:—–]\s*(\d+)(?=\s*(?:[xх×*]|шт|[,;\n]|$))',tail,re.I)
+        amount=int(quantity[1]) if quantity else 1
+        if not 1<=amount<=10000: raise ValueError('Некорректное количество товара')
+        count+=amount*(2 if re.match(r'^2[_-]',sku) else 1)
+    return count
 
 
 def article_text(composition):
