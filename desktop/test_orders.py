@@ -185,6 +185,16 @@ class ManualPrintTests(unittest.TestCase):
         state={'printed':{'1':{'status':'owner-marked'}},'uncertain':{'1':{'status':'submitting'}}}
         self.assertTrue(print_status(1,state)[0]);self.assertIn('1',state['uncertain'])
 
+    def test_offline_printer_preparation_never_claims_or_marks_uncertain(self):
+        from print_actions import PreparationError
+        with tempfile.TemporaryDirectory() as folder:
+            w=FakeWorker(folder)
+            def offline(*args,**kwargs): raise RuntimeError('offline')
+            w.prepare=offline
+            with self.assertRaises(PreparationError):manual_print(w,1)
+            self.assertNotIn('claim',w.calls);self.assertFalse((w.DATA/'state.json').exists())
+            self.assertFalse(w.print_calls)
+
     def test_batch_reports_each_success_for_immediate_badge_refresh(self):
         with tempfile.TemporaryDirectory() as folder:
             w=FakeWorker(folder); notices=[]

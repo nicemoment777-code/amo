@@ -1,13 +1,16 @@
 param(
-  [Parameter(Mandatory=$true)][string]$ImagePath,
-  [Parameter(Mandatory=$true)][double]$WidthMm,
-  [Parameter(Mandatory=$true)][double]$HeightMm,
-  [string]$PrinterName = '4BARCODE 3B-T361U'
+  [string]$ImagePath,
+  [double]$WidthMm,
+  [double]$HeightMm,
+  [string]$PrinterName = '4BARCODE 3B-T361U',
+  [switch]$CheckOnly
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $printer = Get-CimInstance Win32_Printer | Where-Object Name -EQ $PrinterName
 if (-not $printer -or $printer.WorkOffline) { throw 'PRINTER_UNAVAILABLE' }
+if ($CheckOnly) { Write-Output 'PRINTER_READY'; exit 0 }
+if (-not $ImagePath -or $WidthMm -le 0 -or $HeightMm -le 0) { throw 'INVALID_LABEL_ARGUMENTS' }
 $image = [System.Drawing.Image]::FromFile((Resolve-Path -LiteralPath $ImagePath).Path)
 $document = [System.Drawing.Printing.PrintDocument]::new()
 try {

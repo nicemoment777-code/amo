@@ -67,7 +67,17 @@ def atomic_json(path, value):
     temp.write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
     os.replace(temp, path)
 
+class PrinterUnavailableError(RuntimeError):
+    pass
+
+def check_printer(printer):
+    script=Path(os.environ.get('SNOWBRICK_PRINT_SCRIPT',str(ROOT/'ops'/'print-image.ps1')))
+    result=subprocess.run(['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',str(script),'-CheckOnly','-PrinterName',printer],capture_output=True,text=True,encoding='utf-8',errors='replace',creationflags=subprocess.CREATE_NO_WINDOW)
+    if result.returncode or 'PRINTER_READY' not in result.stdout:
+        raise PrinterUnavailableError('Назначенный принтер недоступен. Включите принтер, подключите USB и проверьте режим «Работать автономно» в Windows.')
+
 def prepare(item, for_print=False, variant=''):
+    if for_print: check_printer(select_printer(item))
     from label_pdf import prepare_label
     source = DATA / f"label-{item['id']}-original.pdf"
     target = DATA / f"label-{item['id']}-print{variant}.pdf"

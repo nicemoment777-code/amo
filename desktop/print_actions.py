@@ -19,6 +19,7 @@ def preparation_error(worker, key, error=None):
     if error is None: errors.pop(str(key),None)
     else:
         message='Не удалось подготовить этикетку: проверьте PDF, артикулы и назначения принтеров, затем повторите ручную печать.'
+        if type(error).__name__=='PrinterUnavailableError': message='Назначенный принтер недоступен. Включите его, подключите USB и проверьте режим «Работать автономно» в Windows.'
         if getattr(error,'code',None)==404: message='Исходная этикетка недоступна (404). Обновите PDF в amoCRM и карточки заявки.'
         errors[str(key)]={'at':int(time.time()),'type':type(error).__name__,'message':message}
     worker.atomic_json(path,errors)

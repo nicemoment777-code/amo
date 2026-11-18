@@ -31,6 +31,7 @@ def error_reasons(item, state, routing, default_printer, last_run=None, receipts
         except PrinterRoutingError as error:
             reasons.append(str(error).replace('Проверьте верхнюю панель.', 'Откройте «Настройки → Принтеры и артикулы».'))
     messages = {
+        'PrinterUnavailableError': 'Назначенный принтер недоступен. Включите его, подключите USB и проверьте режим «Работать автономно» в Windows.',
         'URLError': 'При последней проверке не удалось связаться с сервером. Нажмите «Проверить связь и обновить».',
         'HTTPError': 'При последней проверке сервер вернул ошибку чтения данных или этикетки. Проверьте связь и доступ к amoCRM.',
         'PrinterRoutingError': 'При последней проверке обнаружена ошибка назначения принтера. Проверьте назначения в настройках.',

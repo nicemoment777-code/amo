@@ -17,6 +17,18 @@ def worker(folder):
 
 
 class AutoPrintTests(unittest.TestCase):
+    def test_printer_check_is_read_only_and_requires_positive_ack(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as folder:
+            w=worker(folder)
+            with patch.object(w.subprocess,'run',return_value=SimpleNamespace(returncode=0,stdout='PRINTER_READY')) as run:
+                w.check_printer('Assigned printer')
+                command=run.call_args.args[0]
+                self.assertIn('-CheckOnly',command);self.assertNotIn('-ImagePath',command)
+            with patch.object(w.subprocess,'run',return_value=SimpleNamespace(returncode=1,stdout='')):
+                with self.assertRaises(w.PrinterUnavailableError):w.check_printer('Assigned printer')
+            self.assertFalse((Path(folder)/'state.json').exists())
+
     def test_timing_preserves_gate_and_history(self):
         from auto_print import print_interval,set_print_interval
         with tempfile.TemporaryDirectory() as folder:
