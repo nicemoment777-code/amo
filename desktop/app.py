@@ -543,7 +543,7 @@ class App:
         ttk.Button(row,text='Остановить',command=self.stop).pack(side='left',padx=8)
         ttk.Button(row,text='Открыть журнал',command=lambda:os.startfile(str(self.worker.DATA))).pack(side='left')
         ttk.Button(row,text='Завершить модуль',command=self.exit_agent).pack(side='right')
-        ttk.Label(frame,text='СДЭК 1:1 · Яндекс 75 × 115 мм · сверху количество, артикулы и вес в кг.\nПовторная печать — с карточки конкретного заказа.\nЗелёный значок подтверждает передачу драйверу, а не выход бумаги.',foreground=MUTED).pack(anchor='w',pady=18)
+        ttk.Label(frame,text='СДЭК 1:1 · Яндекс 75 × 130 мм · сверху количество, артикулы и вес в кг.\nПовторная печать — с карточки конкретного заказа.\nЗелёный значок подтверждает передачу драйверу, а не выход бумаги.',foreground=MUTED).pack(anchor='w',pady=18)
         self.log=tk.Text(frame,height=8,wrap='word',font=('Segoe UI',10),bd=0,padx=10,pady=10)
         self.log.pack(fill='both',expand=True); self.log.insert('end','\n'.join(self.settings_log)); self.log.configure(state='disabled')
     def history_warning(self):

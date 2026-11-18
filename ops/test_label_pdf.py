@@ -15,7 +15,7 @@ class LabelSizeTest(unittest.TestCase):
             writer = PdfWriter()
             writer.add_blank_page(width=100 * MM, height=150 * MM)
             writer.write(source)
-            for service, width, height, scale in [('yandex', 75, 115, 95 / 150), ('cdek', 100, 170, 1)]:
+            for service, width, height, scale in [('yandex', 75, 130, 95 / 150), ('cdek', 100, 185, 1)]:
                 details = prepare_label(source, target, 'Товар (test-sku)', service, '2.5 кг')
                 page = PdfReader(target).pages[0]
                 self.assertAlmostEqual(float(page.mediabox.width) / MM, width, places=5)
@@ -58,8 +58,8 @@ class LabelSizeTest(unittest.TestCase):
                 self.assertLess(details['fontPt'],12)
                 self.assertGreater(details['fontPt'],0)
                 self.assertEqual(details['headerMm'],[70,20])
-                self.assertAlmostEqual(details['heightMm'],115,places=3)
-                self.assertAlmostEqual(float(PdfReader(target).pages[0].mediabox.height)/MM,115,places=3)
+                self.assertAlmostEqual(details['heightMm'],130,places=3)
+                self.assertAlmostEqual(float(PdfReader(target).pages[0].mediabox.height)/MM,130,places=3)
                 text=''.join(PdfReader(target).pages[0].extract_text().split())
                 for sku in skus:self.assertIn(sku,text)
 
@@ -75,10 +75,23 @@ class LabelSizeTest(unittest.TestCase):
                 self.assertEqual(PdfReader(target).pages[0].extract_text().splitlines()[0],str(count))
                 self.assertGreater(result['countFontPt'],40)
                 self.assertEqual(result['headerMm'],[70,20])
-                self.assertEqual(result['headerContentTopMm'],5)
+                self.assertEqual(result['headerContentTopMm'],20)
                 self.assertEqual(result['headerContentHeightMm'],15)
                 self.assertEqual(result['countFontScale'],0.75)
                 self.assertNotIn('2027',PdfReader(target).pages[0].extract_text())
+
+    def test_complete_label_moves_without_scaling_or_losing_text(self):
+        from reportlab.pdfgen import canvas
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'source.pdf';base=Path(folder)/'base.pdf';shifted=Path(folder)/'shifted.pdf'
+            c=canvas.Canvas(str(source),pagesize=(74*MM,105*MM));c.drawString(10,10,'BOTTOM');c.drawString(10,290,'TOP');c.save()
+            before=prepare_label(source,base,'(A), шт - 2','cdek',vertical_offset_mm=0)
+            after=prepare_label(source,shifted,'(A), шт - 2','cdek')
+            a,b=PdfReader(base).pages[0],PdfReader(shifted).pages[0]
+            self.assertEqual(a.extract_text(),b.extract_text())
+            self.assertAlmostEqual(float(b.mediabox.height)-float(a.mediabox.height),15*MM)
+            self.assertEqual(before['fontPt'],after['fontPt']);self.assertEqual(after['sourceScaleX'],1)
+            self.assertEqual(after['verticalOffsetMm'],15);self.assertEqual(after['heightMm'],140)
 
     def test_landscape_fits_width_below_header(self):
         with tempfile.TemporaryDirectory() as folder:
