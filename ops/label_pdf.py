@@ -12,7 +12,6 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 MM = 72 / 25.4
-LABEL_OFFSET_MM = 15
 HEADER_HEIGHT_MM = 20
 YANDEX_HEIGHT_MM = 115
 HEADER_CONTENT_TOP_MM = 5  # Прежний отступ 1 мм + опустить на 4 мм.
@@ -39,7 +38,7 @@ def wrap(text, font, size, width):
         lines.append(line)
     return lines
 
-def prepare_label(source, target, composition, delivery_service=None, package_weight=None, vertical_offset_mm=LABEL_OFFSET_MM):
+def prepare_label(source, target, composition, delivery_service=None, package_weight=None):
     count = product_count(composition)
     composition = printable_article_text(composition)
     font = 'LabelArial'
@@ -134,14 +133,7 @@ def prepare_label(source, target, composition, delivery_service=None, package_we
     else:
         output.merge_page(page)
     output.merge_page(PdfReader(overlay).pages[0])
-    if vertical_offset_mm not in (0,LABEL_OFFSET_MM):
-        raise ValueError('Некорректный сдвиг этикетки')
-    if vertical_offset_mm:
-        shifted=PdfWriter()
-        shifted.add_blank_page(width=width,height=height+vertical_offset_mm*MM).merge_page(output)
-        writer=shifted
-        height_mm+=vertical_offset_mm
     Path(target).parent.mkdir(parents=True, exist_ok=True)
     with open(target, 'wb') as stream:
         writer.write(stream)
-    return {'widthMm':round(width_mm,4),'heightMm':round(height_mm,4),'headerMm':[70,HEADER_HEIGHT_MM],'verticalOffsetMm':vertical_offset_mm,'headerContentTopMm':HEADER_CONTENT_TOP_MM+vertical_offset_mm,'headerContentHeightMm':HEADER_CONTENT_HEIGHT_MM,'productCount':count,'countFontScale':COUNT_FONT_SCALE,'countFontPt':count_size,'countWidthMm':count_width/MM,'fontPt':size,'lines':lines,'sourceScaleX':scale,'sourceScaleY':scale,'layout':'top-band','weightIncluded':bool(weight)}
+    return {'widthMm':round(width_mm,4),'heightMm':round(height_mm,4),'headerMm':[70,HEADER_HEIGHT_MM],'headerContentTopMm':HEADER_CONTENT_TOP_MM,'headerContentHeightMm':HEADER_CONTENT_HEIGHT_MM,'productCount':count,'countFontScale':COUNT_FONT_SCALE,'countFontPt':count_size,'countWidthMm':count_width/MM,'fontPt':size,'lines':lines,'sourceScaleX':scale,'sourceScaleY':scale,'layout':'top-band','weightIncluded':bool(weight)}
