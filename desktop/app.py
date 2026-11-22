@@ -209,6 +209,8 @@ class App:
         self.search_text=tk.StringVar()
         self.search_entry=ttk.Entry(search_row,textvariable=self.search_text,width=34,font=('Segoe UI',12))
         self.search_entry.pack(side='left',ipady=4); self.search_entry.bind('<Return>',lambda _:self.search_orders())
+        self.search_entry.bind('<KeyRelease>',lambda event:self.search_orders() if event.keysym!='Return' else None)
+        self.search_entry.bind('<KeyRelease>',lambda event:self.search_orders() if event.keysym!='Return' else None)
         RoundedButton(search_row,text='Поиск',command=self.search_orders).pack(side='left',padx=6)
         RoundedButton(search_row,text='Сбросить',command=self.clear_search).pack(side='left')
         article_heading.pack(fill='x',pady=(10,0))
@@ -372,11 +374,12 @@ class App:
         self.all_time.set(False); self.reload(True)
     def search_catalog(self):
         if not self.search_query: return self.catalog
-        return [item for item in self.catalog if self.search_query in str(item.get('orderNumber') or '') or self.search_query in str(item['id'])]
+        from orders_model import matches_order_number
+        return [item for item in self.catalog if matches_order_number(item,self.search_query)]
     def search_orders(self):
         raw=self.search_text.get().strip()
         digits=''.join(char for char in raw if char in '0123456789')
-        if raw and not digits: return self.note('Введите номер заявки или его последние цифры.')
+        if raw and not digits: return self.note('Введите любые цифры из номера заявки.')
         self.search_query=digits; self.card_filter=None; self.all_time.set(True)
         self.carrier.set('Все доставки'); self.tabs.select(0); self.render(True)
         self.note('Найдено заявок: '+str(len(self.visible_cards)))
@@ -528,7 +531,7 @@ class App:
         self.printer_panel=PrinterPanel(routes_page,self.routes,self.known_skus,self.store_routes,self.note)
         self.printer_panel.pack(fill='x')
         self.printer_panel.set_printers(self.printer_names)
-        ttk.Label(routes_page,text='Назначения применяются к автоматической и ручной печати.\nОдин артикул может быть закреплён только за одним принтером.',foreground=MUTED).pack(anchor='w',pady=16)
+        ttk.Label(routes_page,text='Назначения применяются к автоматической и ручной печати.\nОдин артикул можно выбрать у нескольких принтеров.',foreground=MUTED).pack(anchor='w',pady=16)
         ttk.Button(routes_page,text='Обновить принтеры Windows',command=lambda:self.background(self.refresh_printers)).pack(anchor='w')
         ttk.Label(frame,text='snegostroy.amocrm.ru · проверка каждые 5 минут',foreground=MUTED).pack(anchor='w',pady=(4,16))
         row=ttk.Frame(frame); row.pack(fill='x')
@@ -1005,7 +1008,9 @@ def self_test():
     probe.rows[1]['printer'].set('Self-test printer'); probe.printer_changed(1)
     probe.rows[1]['articles'].buttons['CHECK_SKU'].invoke()
     assert probe.selected(1)==['CHECK_SKU']
-    assert all('CHECK_SKU' not in row['articles'].buttons for i,row in enumerate(probe.rows) if i!=1)
+    assert all('CHECK_SKU' in row['articles'].buttons for row in probe.rows)
+    probe.rows[1]['select_all'].invoke()
+    assert probe.selected(1)==['CHECK_SKU']
     probe.rows[1]['articles'].buttons['CHECK_SKU'].invoke()
     assert all('CHECK_SKU' in row['articles'].buttons for row in probe.rows)
     assert probe.dirty and probe.save(True)

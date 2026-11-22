@@ -17,9 +17,7 @@ def routes_from_rows(rows, enabled=True):
     return normalize_routes({'enabled':enabled,'slots':slots})
 
 def available_articles(known, rows, index):
-    occupied={sku for n,(_,skus) in enumerate(rows) if n!=index for sku in skus}
-    own=set(rows[index][1])
-    return sorted((set(known)|own)-occupied)
+    return sorted(set(known)|{sku for _,skus in rows for sku in skus})
 
 class PrinterPanel(ttk.Frame):
     def __init__(self,parent,config,known_skus,on_save,on_note):
@@ -29,43 +27,45 @@ class PrinterPanel(ttk.Frame):
         heading=ttk.Frame(self); heading.pack(fill='x',pady=(0,5))
         ttk.Label(heading,text='Принтеры и артикулы',font=('Segoe UI',12,'bold')).pack(side='left')
         ttk.Button(heading,text='Сохранить назначения',style='Accent.TButton',command=self.save).pack(side='right')
-        services=ttk.LabelFrame(self,text='Принтер по доставке — имеет приоритет над артикулами',padding=8)
-        services.pack(fill='x',pady=(0,10)); self.service_vars={}; self.service_combos=[]
-        for service,label in [('yandex','Яндекс доставка'),('cdek','СДЭК доставка')]:
-            ttk.Label(services,text=label).pack(side='left',padx=(4,8))
-            var=tk.StringVar(value=config.get('deliveryPrinters',{}).get(service) or 'По артикулам')
-            self.service_vars[service]=var
-            combo=ttk.Combobox(services,textvariable=var,state='readonly',width=28)
-            combo.pack(side='left',padx=(0,16)); self.service_combos.append(combo)
-            combo.bind('<<ComboboxSelected>>',lambda _:self.queue_save())
         table=ttk.Frame(self); table.pack(fill='x'); self.table=table
         ttk.Label(table,text='Принтер Windows',foreground='#737d94').grid(row=0,column=1,sticky='w',padx=8)
         ttk.Label(table,text='Артикулы для печати',foreground='#737d94').grid(row=0,column=2,sticky='w',padx=8)
         table.columnconfigure(2,weight=1)
-        routes=config.get('slots',config.get('routes',[]))
+        routes=[dict(route) for route in config.get('slots',config.get('routes',[]))]
+        for service,printers in config.get('deliveryPrinters',{}).items():
+            for printer in ([printers] if isinstance(printers,str) else printers):
+                if not printer: continue
+                row=next((row for row in routes if row.get('printer')==printer),None)
+                if row is None: row={'printer':printer,'skus':[]}; routes.append(row)
+                row.setdefault('services',[]).append(service)
         for index in range(max(4,len(routes))):
             route=routes[index] if index<len(routes) else {}
             self.add_row(route)
         self.refresh_articles()
-        self.description=tk.StringVar(value='Выбор принтеров и артикулов сохраняется автоматически. Занятые артикулы скрыты у остальных принтеров.')
+        self.description=tk.StringVar(value='Все артикулы доступны у каждого принтера, в том числе выбранные в других строках. Изменения сохраняются автоматически.')
         ttk.Label(self,textvariable=self.description,foreground='#737d94',wraplength=1200).pack(anchor='w',pady=(5,0))
     def add_row(self,route):
         index=len(self.rows); y=index+1
         row={'printer':tk.StringVar(value=route.get('printer') or EMPTY_PRINTER),
              'checks':{sku:tk.BooleanVar(value=True) for sku in route.get('skus',[])}}
+        row['services']={service:tk.BooleanVar(value=service in route.get('services',[])) for service in ('yandex','cdek')}
         row['previous']=row['printer'].get()
         ttk.Label(self.table,text=str(index+1),width=2).grid(row=y,column=0,sticky='w')
-        combo=ttk.Combobox(self.table,textvariable=row['printer'],state='readonly',width=27)
-        combo.grid(row=y,column=1,sticky='ew',padx=8,pady=3); row['combo']=combo
+        printer_box=ttk.Frame(self.table); printer_box.grid(row=y,column=1,sticky='ew',padx=8,pady=3)
+        combo=ttk.Combobox(printer_box,textvariable=row['printer'],state='readonly',width=27)
+        combo.pack(fill='x'); row['combo']=combo
+        for service,label in [('yandex','Яндекс доставка'),('cdek','СДЭК доставка')]:
+            ttk.Checkbutton(printer_box,text=label,variable=row['services'][service],command=self.queue_save).pack(anchor='w')
         combo.bind('<<ComboboxSelected>>',lambda _,i=index:self.printer_changed(i))
         row['articles']=ArticleButtons(self.table,compact=True)
         row['articles'].grid(row=y,column=2,sticky='ew',padx=8,pady=3)
-        ttk.Button(self.table,text='Очистить',command=lambda i=index:self.clear(i)).grid(row=y,column=3,padx=(8,0),pady=3)
+        actions=ttk.Frame(self.table); actions.grid(row=y,column=3,padx=(8,0),pady=3)
+        row['select_all']=ttk.Button(actions,text='Выбрать все артикулы',command=lambda i=index:self.select_all(i))
+        row['select_all'].pack()
+        ttk.Button(actions,text='Очистить',command=lambda i=index:self.clear(i)).pack(pady=(3,0))
         self.rows.append(row)
     def set_printers(self,names):
         self.names=list(names)
-        for combo,var in zip(self.service_combos,self.service_vars.values()):
-            combo.configure(values=list(dict.fromkeys(['По артикулам']+self.names+([var.get()] if var.get()!='По артикулам' else []))))
         for row in self.rows:
             values=[EMPTY_PRINTER]+self.names
             if row['printer'].get() not in values: values.append(row['printer'].get())
@@ -77,6 +77,7 @@ class PrinterPanel(ttk.Frame):
         rows=[(r['printer'].get(),self.selected(i)) for i,r in enumerate(self.rows)]
         for _,skus in rows: known.update(skus)
         for index,row in enumerate(self.rows):
+            row['select_all'].configure(state='normal' if row['printer'].get()!=EMPTY_PRINTER else 'disabled')
             choices=[]
             for sku in available_articles(known,rows,index):
                 var=row['checks'].setdefault(sku,tk.BooleanVar(value=False))
@@ -91,7 +92,9 @@ class PrinterPanel(ttk.Frame):
             return self.clear(index)
         row['previous']=name; self.refresh_articles(); self.queue_save()
     def clear(self,index):
-        row=self.rows[index]; row['printer'].set(EMPTY_PRINTER); row['previous']=EMPTY_PRINTER; row['checks']={}; self.refresh_articles(); self.queue_save()
+        row=self.rows[index]; row['printer'].set(EMPTY_PRINTER); row['previous']=EMPTY_PRINTER; row['checks']={}
+        for var in row['services'].values(): var.set(False)
+        self.refresh_articles(); self.queue_save()
     def queue_save(self):
         self.dirty=True; self.description.set('Сохраняем выбор…')
         if self.save_timer: self.after_cancel(self.save_timer)
@@ -99,16 +102,23 @@ class PrinterPanel(ttk.Frame):
     def toggle_article(self,index,sku):
         row=self.rows[index]
         if row['printer'].get()==EMPTY_PRINTER: return
-        if any(n!=index and sku in self.selected(n) for n in range(len(self.rows))): return
         var=row['checks'].get(sku)
         if var is None: return
-        var.set(not var.get()); self.refresh_articles(); self.queue_save()
+        var.set(not var.get())
+        self.refresh_articles(); self.queue_save()
+    def select_all(self,index):
+        if self.rows[index]['printer'].get()==EMPTY_PRINTER: return
+        rows=[(row['printer'].get(),self.selected(n)) for n,row in enumerate(self.rows)]
+        for sku in available_articles(self.known_skus(),rows,index):
+            self.rows[index]['checks'].setdefault(sku,tk.BooleanVar(value=False)).set(True)
+        self.refresh_articles(); self.queue_save()
     def save(self,automatic=False):
         if self.save_timer: self.after_cancel(self.save_timer); self.save_timer=None
         try:
             enabled=self.routing_enabled or any(self.selected(i) for i in range(len(self.rows)))
             config=routes_from_rows([(row['printer'].get(),self.selected(i)) for i,row in enumerate(self.rows)],enabled)
-            config['deliveryPrinters']={key:var.get() for key,var in self.service_vars.items() if var.get()!='По артикулам'}
+            config['deliveryPrinters']={service:[row['printer'].get() for row in self.rows if row['printer'].get()!=EMPTY_PRINTER and row['services'][service].get()] for service in ('yandex','cdek')}
+            config['deliveryPrinters']={key:value for key,value in config['deliveryPrinters'].items() if value}
             if self.on_save(config,automatic):
                 self.dirty=False; self.routing_enabled=enabled
                 self.description.set('Сохранено автоматически. Выбор принтеров и артикулов восстановится при следующем запуске.')

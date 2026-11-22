@@ -1,4 +1,4 @@
-import {day,stamp,title,filterItems,articleCounts,orderedGroups,printedGroups,skuColors,orderColors} from '/printer-model.js';
+import {day,stamp,title,filterItems,matchesOrderNumber,articleCounts,orderedGroups,printedGroups,skuColors,orderColors} from '/printer-model.js';
 const $=id=>document.getElementById(id);
 const printerIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 9V3h12v6M6 17H3V9h18v8h-3M6 14h12v7H6z"/><path d="M17 11h2"/></svg>';
 const copyIcon='<svg viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 6V2h12v16h-3M2 6h12v16H2z"/></svg>';
@@ -161,7 +161,7 @@ function renderPrintedArchive(history=archiveHistory){
   const items=[...combined.values()].map(item=>{
     const id=String(item.id),uncertain=!history.printed?.[id]&&(item.statusText==='Печать не подтверждена'||!!history.uncertain?.[id]);
     return {...item,confirmed:!uncertain&&!!(item.confirmed||history.printed?.[id]),canPrint:item.canPrint&&!uncertain};
-  }).filter(item=>!query||[item.orderNumber,item.id,...item.skus].some(value=>String(value||'').toLowerCase().includes(query)));
+  }).filter(item=>!query||[item.orderNumber,item.id,...item.skus].some(value=>String(value||'').toLowerCase().includes(query))||(/^[\d\s-]+$/.test(query)&&matchesOrderNumber(item,query)));
   const groups=printedGroups(items),orders=$('printedArchiveOrders');orders.replaceChildren();
   $('printedArchiveSummary').textContent=`Напечатанных заявок: ${groups.reduce((n,g)=>n+g.items.length,0)} · Групп артикулов: ${groups.length}. Повторная печать требует подтверждения.`;
   if(!groups.length)orders.append(node('div','Напечатанных заявок по выбранным условиям нет.','empty'));
@@ -198,10 +198,13 @@ function fillSettings(){
   $('printerSource').textContent=online()?`Принтеры компьютера «${devices.find(v=>v.id===device)?.name}»: ${snapshot.printers.length}. Подключение amoCRM уже настроено на сервере.`:'Компьютер печати не на связи. Список принтеров появится после запуска его модуля.';
   routesDraft=structuredClone(snapshot.routes.slots||snapshot.routes.routes||[]);while(routesDraft.length<4)routesDraft.push({printer:'',skus:[]});
   const select=$('defaultPrinter');select.replaceChildren();for(const name of snapshot.printers){const o=node('option',name);o.value=name;select.append(o);}select.value=snapshot.printer;
-  for(const [id,service] of [['deliveryYandex','yandex'],['deliveryCdek','cdek']]){
-    const el=$(id);el.replaceChildren();const empty=node('option','По артикулам');empty.value='';el.append(empty);
-    for(const name of new Set([...snapshot.printers,...(snapshot.routes.deliveryPrinters?.[service]?[snapshot.routes.deliveryPrinters[service]]:[])])){const option=node('option',name+(snapshot.printers.includes(name)?'':' · не установлен'));option.value=name;el.append(option);}
-    el.value=snapshot.routes.deliveryPrinters?.[service]||'';
+  for(const service of ['yandex','cdek']){
+    const value=snapshot.routes.deliveryPrinters?.[service]||[];
+    for(const printer of (Array.isArray(value)?value:[value])){
+      let row=routesDraft.find(row=>row.printer===printer);
+      if(!row){row={printer,skus:[]};routesDraft.push(row);}
+      row.services=[...new Set([...(row.services||[]),service])];
+    }
   }
   drawRoutes();renderJournal();
 }
@@ -211,8 +214,11 @@ function drawRoutes(){
     const row=node('div',undefined,'route'),left=node('div');left.append(node('h3',`Принтер ${index+1}`));const select=node('select');select.setAttribute('aria-label',`Принтер ${index+1}`);
     const empty=node('option','Не выбран');empty.value='';select.append(empty);
     for(const name of snapshot.printers){const o=node('option',name);o.value=name;o.disabled=routesDraft.some((v,i)=>i!==index&&v.printer===name);select.append(o);}select.value=slot.printer;
-    select.onchange=()=>{slot.printer=select.value;drawRoutes();};left.append(select);const clear=node('button','Очистить');clear.onclick=()=>{slot.printer='';slot.skus=[];drawRoutes();};left.append(clear);row.append(left);
-    const chips=node('div',undefined,'routechips');for(const sku of skus){const owner=routesDraft.findIndex(v=>v.skus.includes(sku));if(owner!==-1&&owner!==index)continue;const label=node('label');const check=node('input');check.type='checkbox';check.checked=slot.skus.includes(sku);check.disabled=!slot.printer;check.onchange=()=>{slot.skus=check.checked?[...slot.skus,sku]:slot.skus.filter(s=>s!==sku);drawRoutes();};label.append(check,document.createTextNode(' '+sku));chips.append(label);}row.append(chips);$('routes').append(row);
+    select.onchange=()=>{slot.printer=select.value;if(!slot.printer)slot.skus=[];drawRoutes();};left.append(select);
+    for(const [service,text] of [['yandex','Яндекс доставка'],['cdek','СДЭК доставка']]){const label=node('label');const check=node('input');check.type='checkbox';check.checked=(slot.services||[]).includes(service);check.onchange=()=>{slot.services=check.checked?[...(slot.services||[]),service]:(slot.services||[]).filter(v=>v!==service);};label.append(check,document.createTextNode(text));left.append(label);}
+    const all=node('button','Выбрать все артикулы');all.disabled=!slot.printer;all.onclick=()=>{slot.skus=[...skus];drawRoutes();};left.append(all);
+    const clear=node('button','Очистить');clear.onclick=()=>{slot.printer='';slot.skus=[];slot.services=[];drawRoutes();};left.append(clear);row.append(left);
+    const chips=node('div',undefined,'routechips');for(const sku of skus){const label=node('label');const check=node('input');check.type='checkbox';check.checked=slot.skus.includes(sku);check.disabled=!slot.printer;check.onchange=()=>{slot.skus=check.checked?[...slot.skus,sku]:slot.skus.filter(s=>s!==sku);drawRoutes();};label.append(check,document.createTextNode(' '+sku));chips.append(label);}row.append(chips);$('routes').append(row);
   });
   $('routingStatus').textContent=snapshot.routes.error|| (snapshot.routes.enabled?'Назначения включены. Нераспределённые артикулы не печатаются.':'Для доставки без отдельного принтера действуют настройки по артикулам; до первой настройки — 4BARCODE 3B-T361U.');
 }
@@ -233,7 +239,9 @@ $('today').onclick=()=>{const d=day(Date.now()/1000);$('from').value=d;$('to').v
 $('twoHours').onclick=()=>{const now=Date.now()/1000;range={from:now-7200,to:now};render();};
 $('applyStart').onclick=action(async()=>{if(!$('historyStart').value)throw Error('Выберите дату начала');range=null;skuFilter=null;selected.clear();if(online())await command('refresh',{historyStart:$('historyStart').value.split('-').reverse().join('.')});await refresh(true);});
 $('historyStart').onchange=$('applyStart').onclick;
-$('searchForm').onsubmit=e=>{e.preventDefault();query=$('search').value.trim();carrier='all';skuFilter=null;range=null;render();};$('resetSearch').onclick=()=>{query='';$('search').value='';render();};
+function searchOrders(){query=$('search').value.trim();carrier='all';skuFilter=null;range=null;render();}
+$('search').oninput=searchOrders;
+$('searchForm').onsubmit=e=>{e.preventDefault();searchOrders();};$('resetSearch').onclick=()=>{query='';$('search').value='';render();};
 $('device').onchange=action(async()=>{if(busy)throw Error('Дождитесь завершения действия');device=$('device').value;localStorage.setItem('snowbrick-device',device);snapshot=null;$('orders').replaceChildren();await refresh();});
 $('refresh').onclick=action(async()=>{if(online())await command('refresh');await refresh(true);});$('refreshArticles').onclick=action(async()=>{if(online())await command('articles');await refresh(true);});
 $('openPrintedArchive').onclick=action(openPrintedArchive);$('refreshPrintedArchive').onclick=action(openPrintedArchive);
@@ -250,7 +258,7 @@ $('browserSettingsPrint').onclick=action(async()=>{$('settingsDialog').close();a
 $('settings').onclick=()=>{fillSettings();$('settingsDialog').showModal();};
 for(const b of document.querySelectorAll('[data-close]'))b.onclick=()=>$(b.dataset.close).close();
 for(const b of $('settingsTabs').querySelectorAll('button'))b.onclick=()=>{for(const s of document.querySelectorAll('.settingspage'))s.hidden=s.id!==b.dataset.page;for(const x of $('settingsTabs').querySelectorAll('button'))x.classList.toggle('active',x===b);if(b.dataset.page==='journalPage')renderJournal();};
-$('saveRoutes').onclick=action(()=>command('settings',{printer:$('defaultPrinter').value,routes:{enabled:snapshot.routes.enabled||routesDraft.some(v=>v.skus.length),slots:routesDraft,deliveryPrinters:Object.fromEntries([['yandex',$('deliveryYandex').value],['cdek',$('deliveryCdek').value]].filter(([,v])=>v))}}));
+$('saveRoutes').onclick=action(()=>command('settings',{printer:$('defaultPrinter').value,routes:{enabled:snapshot.routes.enabled||routesDraft.some(v=>v.skus.length),slots:routesDraft,deliveryPrinters:Object.fromEntries(['yandex','cdek'].map(service=>[service,routesDraft.filter(row=>row.printer&&(row.services||[]).includes(service)).map(row=>row.printer)]).filter(([,values])=>values.length))}}));
 $('refreshPrinters').onclick=action(async()=>{await command('printers');fillSettings();});
 $('startup').onchange=action(()=>command('startup',{enabled:$('startup').checked}));$('archive').onclick=action(()=>command('archive'));$('openArchive').onclick=action(()=>command('openArchive'));
 $('journalSearch').oninput=renderJournal;$('refreshJournal').onclick=action(async()=>{await refresh(true);renderJournal();});

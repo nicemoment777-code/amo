@@ -58,7 +58,7 @@ class BrowserBridge:
         for item in local.pop('items'):
             skus=sku_set(item); confirmed,status=print_status(item['id'],state,receipts)
             blocked=str(item['id']) in state.get('uncertain',{}) or state.get('printed',{}).get(str(item['id']),{}).get('status')=='reserved-on-server'
-            items.append({'id':item['id'],'orderNumber':item.get('orderNumber'),'createdAt':item.get('createdAt',0),
+            items.append({'id':item['id'],'orderNumber':item.get('orderNumber'),'trackingNumber':item.get('trackingNumber'),'createdAt':item.get('createdAt',0),
                 'deliveryService':item.get('deliveryService','unknown'),'hasLabel':bool(item.get('hasLabel')),'skus':skus,'colors':sku_color(skus),
                 'confirmed':confirmed,'statusText':status,'canPrint':bool(skus and item.get('hasLabel') and str(item['id']) not in state.get('preparationErrors',{})),
                 'reasons':error_reasons(item,state,routes,local['printer'],last,receipts,local['printers'])})

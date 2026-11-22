@@ -1,4 +1,4 @@
-"""Один артикул закрепляется только за одним принтером Windows."""
+"""Назначения артикулов и доставок принтерам Windows."""
 import json
 from pathlib import Path
 from print_order import group_key
@@ -10,9 +10,9 @@ def normalize_routes(config):
     result=_normalize_article_routes(config)
     if isinstance(config,dict) and 'deliveryPrinters' in config:
         values=config['deliveryPrinters']
-        if not isinstance(values,dict) or any(k not in ('cdek','yandex') or not isinstance(v,str) or len(v)>256 for k,v in values.items()):
+        if not isinstance(values,dict) or any(k not in ('cdek','yandex') or not (isinstance(v,str) and len(v)<=256 or isinstance(v,list) and all(isinstance(p,str) and p.strip() and len(p)<=256 for p in v)) for k,v in values.items()):
             raise PrinterRoutingError('Некорректные принтеры доставок')
-        result['deliveryPrinters']={key:value.strip() for key,value in values.items()}
+        result['deliveryPrinters']={key:(list(dict.fromkeys(p.strip() for p in value)) if isinstance(value,list) else value.strip()) for key,value in values.items()}
     return result
 
 
@@ -37,7 +37,7 @@ def _normalize_article_routes(config):
         return {**result,'slots':slots}
     if not isinstance(config,dict) or not isinstance(config.get('routes',[]),list):
         raise PrinterRoutingError('Повреждены назначения принтеров. Проверьте верхнюю панель.')
-    owners={}; routes=[]; printers=set()
+    routes=[]; printers=set()
     for route in config.get('routes',[]):
         if not isinstance(route,dict): raise PrinterRoutingError('Некорректное назначение принтера')
         printer=route.get('printer','')
@@ -48,9 +48,6 @@ def _normalize_article_routes(config):
         if not skus: raise PrinterRoutingError('Выберите хотя бы один артикул')
         if printer in printers: raise PrinterRoutingError('Принтер уже есть в списке назначений')
         printers.add(printer)
-        for sku in skus:
-            if sku in owners: raise PrinterRoutingError('Один артикул нельзя назначить нескольким принтерам')
-            owners[sku]=printer
         routes.append({'printer':printer,'skus':skus})
     enabled=config.get('enabled',bool(routes))
     if not isinstance(enabled,bool): raise PrinterRoutingError('Некорректный режим назначений принтеров')
@@ -70,13 +67,22 @@ def choose_printer(item, config, default):
         if not delivery[service]:
             raise PrinterRoutingError('Для доставки не назначен принтер. Проверьте настройки.')
         group_key(item)  # Даже маршрут доставки не разрешает печать без артикула.
-        return delivery[service]
-    if not config['enabled']: return default
-    owners={sku:route['printer'] for route in config['routes'] for sku in route['skus']}
+        if isinstance(delivery[service],str): return delivery[service]
+        candidates=delivery[service]
+        routes={route['printer']:set(route['skus']) for route in config['routes']}
+        skus=set(group_key(item))
+        candidates=[printer for printer in candidates if printer not in routes or skus<=routes[printer]]
+        if not candidates: raise PrinterRoutingError('Для доставки и всех артикулов заявки нет общего принтера. Проверьте настройки.')
+        return default if default in candidates else candidates[0]
+    tagged={printer for value in delivery.values() for printer in ([value] if isinstance(value,str) else value)}
+    routes=[route for route in config['routes'] if route['printer'] not in tagged]
+    if not config['enabled']:
+        if default in tagged: raise PrinterRoutingError('Основной принтер назначен другой доставке. Проверьте настройки.')
+        return default
     skus=group_key(item)
-    if any(sku not in owners for sku in skus):
+    if any(not any(sku in route['skus'] for route in routes) for sku in skus):
         raise PrinterRoutingError('Для артикула не назначен принтер. Проверьте верхнюю панель.')
-    selected={owners[sku] for sku in skus}
-    if len(selected)!=1:
+    selected=[route['printer'] for route in routes if set(skus)<=set(route['skus'])]
+    if not selected:
         raise PrinterRoutingError('Артикулы одной заявки назначены разным принтерам. Перенесите их на один принтер.')
-    return selected.pop()
+    return default if default in selected else selected[0]

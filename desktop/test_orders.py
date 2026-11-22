@@ -12,6 +12,14 @@ from printer_routing import normalize_routes, choose_printer, load_routes, Print
 from printer_panel import routes_from_rows, available_articles, EMPTY_PRINTER
 
 class BoardTests(unittest.TestCase):
+    def test_search_matches_any_digits_across_separators_and_crm_id(self):
+        from orders_model import matches_order_number
+        item={'id':987654321,'orderNumber':'103-504-748-14','trackingNumber':'001-889-772'}
+        for query in ('1035','3504','4748','4814','504-748','6543','1889','9772',''):
+            self.assertTrue(matches_order_number(item,query))
+        self.assertFalse(matches_order_number(item,'9999'))
+        self.assertTrue(matches_order_number({'orderNumber':'00001234'},'0012'))
+
     def test_article_counts_drop_for_every_sku_after_success_and_keep_missing_labels(self):
         items=[{'id':1,'createdAt':1,'composition':'(A); (B)','hasLabel':True},
                {'id':2,'createdAt':2,'composition':'(A)','hasLabel':False}]
@@ -239,7 +247,7 @@ class RoutingTests(unittest.TestCase):
         config=routes_from_rows(rows)
         self.assertEqual(config['routes'],[{'printer':'P1','skus':['A','B']},{'printer':'P2','skus':['C']}])
         self.assertEqual(len(config['slots']),4)
-        with self.assertRaises(PrinterRoutingError): routes_from_rows([('P1',['A']),('P2',['A'])])
+        self.assertEqual(len(routes_from_rows([('P1',['A']),('P2',['A'])])['routes']),2)
         with self.assertRaises(PrinterRoutingError): routes_from_rows([(EMPTY_PRINTER,['A'])])
         with self.assertRaises(PrinterRoutingError): routes_from_rows([('P1',['A']),('P1',['B'])])
         self.assertEqual(routes_from_rows([(EMPTY_PRINTER,[])]*4)['routes'],[])
@@ -251,17 +259,24 @@ class RoutingTests(unittest.TestCase):
             self.assertEqual(loaded['slots'][1],{'printer':'P2','skus':[]})
             self.assertEqual(loaded['slots'][2],{'printer':'P3','skus':['A']})
             self.assertEqual(choose_printer({'composition':'(A)'},loaded,'default'),'P3')
-    def test_assigned_articles_are_hidden_from_other_printer_menus(self):
+    def test_assigned_articles_remain_visible_in_every_printer_menu(self):
         rows=[('P1',['A']),('P2',['B']),('',[]),('',[])]
-        self.assertEqual(available_articles(['A','B','C'],rows,0),['A','C'])
-        self.assertEqual(available_articles(['A','B','C'],rows,1),['B','C'])
-        self.assertEqual(available_articles(['A','B','C'],rows,3),['C'])
-    def test_one_printer_can_have_multiple_articles_but_article_has_one_owner(self):
+        for index in range(len(rows)):
+            self.assertEqual(available_articles(['A','B','C'],rows,index),['A','B','C'])
+    def test_multiple_printers_share_articles_and_choose_one_common_printer(self):
         routes={'routes':[{'printer':'P1','skus':['A','B']},{'printer':'P2','skus':['C']}]}
         self.assertEqual(choose_printer({'composition':'(A); (B)'},routes,'default'),'P1')
         self.assertEqual(choose_printer({'composition':'(C)'},routes,'default'),'P2')
-        with self.assertRaises(PrinterRoutingError):
-            normalize_routes({'routes':[{'printer':'P1','skus':['A']},{'printer':'P2','skus':['A']}]})
+        shared=normalize_routes({'routes':[{'printer':'P1','skus':['A']},{'printer':'P2','skus':['A','B']}]})
+        self.assertEqual(choose_printer({'composition':'(A)'},shared,'P2'),'P2')
+        self.assertEqual(choose_printer({'composition':'(A)'},shared,'other'),'P1')
+        self.assertEqual(choose_printer({'composition':'(A); (B)'},shared,'P1'),'P2')
+    def test_delivery_lists_intersect_articles_without_duplicate_printing(self):
+        config=normalize_routes({'routes':[{'printer':'P1','skus':['A']},{'printer':'P2','skus':['A','B']}], 'deliveryPrinters':{'yandex':['P1','P2'],'cdek':['P2']}})
+        self.assertEqual(choose_printer({'composition':'(A)','deliveryService':'yandex'},config,'P2'),'P2')
+        self.assertEqual(choose_printer({'composition':'(A); (B)','deliveryService':'yandex'},config,'P1'),'P2')
+        self.assertEqual(choose_printer({'composition':'(A)','deliveryService':'cdek'},config,'P1'),'P2')
+        with self.assertRaises(PrinterRoutingError): choose_printer({'composition':'(C)','deliveryService':'cdek'},config,'P2')
 
     def test_unassigned_and_mixed_printer_order_is_blocked_not_duplicated(self):
         routes={'routes':[{'printer':'P1','skus':['A']},{'printer':'P2','skus':['B']}]}

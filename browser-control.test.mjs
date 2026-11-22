@@ -84,6 +84,15 @@ test('browser filters use Moscow dates and multi-article orders count once per a
   assert.deepEqual(orderedGroups([...items,items[0]]).map(v=>v.id),[1,3,2]);
 });
 
+test('order search matches any digit fragment across number separators and CRM ids',()=>{
+  const items=[{id:987654321,orderNumber:'103-504-748-14',trackingNumber:'001-889-772',createdAt:1},{id:223344,orderNumber:'00001234',createdAt:1}];
+  const find=query=>filterItems(items,{from:0,to:2,query}).map(item=>item.id);
+  for(const query of ['1035','3504','4748','4814','504-748','6543','1889','9772'])assert.deepEqual(find(query),[987654321]);
+  assert.deepEqual(find('0012'),[223344]);
+  assert.deepEqual(find('9999'),[]);
+  assert.deepEqual(find(''),[987654321,223344]);
+});
+
 test('failed durable enqueue never becomes a deliverable print command',async()=>{
   const folder=await mkdtemp(tmpdir()+'/browser-write-fail-');
   try{

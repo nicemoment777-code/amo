@@ -7,6 +7,16 @@ from pathlib import Path
 from print_order import articles
 
 MOSCOW = timezone(timedelta(hours=3))
+def matches_order_number(item, query=''):
+    text=str(query).strip()
+    digits=''.join(char for char in text if char in '0123456789')
+    if not text: return True
+    for value in (item.get('orderNumber'), item.get('id'), item.get('trackingNumber')):
+        number=str(value or '')
+        if text in number or (digits and digits in ''.join(char for char in number if char in '0123456789')):
+            return True
+    return False
+
 VISIBLE_FROM = int(datetime(2026,10,1,tzinfo=MOSCOW).timestamp())
 PALETTE = {
     'red': ('#ff666d', '#131936'), 'pink': ('#f99bcf', '#131936'),

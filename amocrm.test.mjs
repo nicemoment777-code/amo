@@ -97,6 +97,7 @@ test('printing reads every page in the selected pipeline and extracts only requi
     return Response.json({_embedded:{leads:[{id:Number(page),created_at:123,pipeline_id:8604134,status_id:page==='1'?777:778,custom_fields_values:[
       {field_name:'Итоговый вес, кг',values:[{value:4.52}]},
       {field_name:'ORDERID',values:[{value:page === '1' ? '001048' : 1047}]},
+      {field_code:'DELIVERY_TRACK_NUMBER',values:[{value:'001-889-772'}]},
       {field_name:'Состав заказа',values:[{value:'Товар 1 - 2; Товар 2 - 1'}]},
       {field_name:'Этикетка ШК СДЭК',values:[{value:'https://files.crmkit.ru/private.pdf'}]}
     ]}]},_links:page === '1' ? {next:{href:'https://evil.test/ignored'}} : {}});
@@ -115,6 +116,7 @@ test('printing reads every page in the selected pipeline and extracts only requi
   assert.equal(data.items[0].hasLabel, true);
   assert.equal(data.items[0].packageWeight,'4.52 кг');
   assert.equal(data.items[0].orderNumber, '001048');
+  assert.equal(data.items[0].trackingNumber,'001-889-772');
   assert.equal(data.items[1].orderNumber, '1047');
   assert.doesNotMatch(JSON.stringify(data.items), /private.pdf/);
 });

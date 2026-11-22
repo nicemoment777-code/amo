@@ -80,11 +80,12 @@ export async function createAmoCrm(file, origin, {fetcher = fetch, now = Date.no
     let labelHost = null;
     try { labelHost = new URL(label).hostname; } catch {}
     const orderValue = name => (lead.custom_fields_values || [])
-      .filter(f => f.field_name?.trim().toLowerCase() === name.toLowerCase())
+      .filter(f => [f.field_name,f.field_code].some(value=>value?.trim().toLowerCase().replace(/[ _-]+/g,'') === name.toLowerCase().replace(/[ _-]+/g,'')))
       .flatMap(f => f.values || []).map(v => v.value)
       .find(value => (typeof value === 'string' && value.trim()) || (typeof value === 'number' && Number.isSafeInteger(value)));
     const orderNumber = orderValue('ORDERID') ?? orderValue('Номер заказа');
-    return {id: lead.id, shipped: shippedStatuses.has(lead.status_id), statusId:lead.status_id, orderNumber: orderNumber == null ? null : String(orderNumber).trim(), deliveryService, createdAt: lead.created_at, pipelineId: lead.pipeline_id, packageWeight: packageWeight(lead), composition, articleSource, hasLabel: Boolean(labelHost), labelHost};
+    const trackingNumber = orderValue('delivery track number') ?? orderValue('delivery_track_number') ?? orderValue('tracking number') ?? orderValue('Трек-номер') ?? orderValue('Номер трекинга');
+    return {id: lead.id, shipped: shippedStatuses.has(lead.status_id), statusId:lead.status_id, orderNumber: orderNumber == null ? null : String(orderNumber).trim(), trackingNumber: trackingNumber == null ? null : String(trackingNumber).trim(), deliveryService, createdAt: lead.created_at, pipelineId: lead.pipeline_id, packageWeight: packageWeight(lead), composition, articleSource, hasLabel: Boolean(labelHost), labelHost};
   }
   return {
     reportItems: (from, to, pipelineId = null) => serial(async () => {
