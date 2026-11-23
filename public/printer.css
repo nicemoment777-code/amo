@@ -45,3 +45,4 @@
 #openPrintedArchive{background:#df253b;color:#fff}
 
 .route>div:first-child{display:flex;flex-direction:column;align-items:stretch;gap:7px}.route>div:first-child>label{display:flex;align-items:center;gap:7px}.route>div:first-child>button{font-size:12px;padding:9px 7px}
+#ordersLoading{padding:18px;background:#e6eefb;border-radius:12px;margin:10px 0;font-weight:600}#ordersLoading[hidden],#articles[hidden]{display:none}.loading-spinner{display:inline-block;width:18px;height:18px;border:3px solid #b8c7e1;border-top-color:#199653;border-radius:50%;vertical-align:middle;margin-right:8px;animation:orders-spin .8s linear infinite}@keyframes orders-spin{to{transform:rotate(360deg)}}

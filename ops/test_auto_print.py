@@ -17,6 +17,27 @@ def worker(folder):
 
 
 class AutoPrintTests(unittest.TestCase):
+    def test_missing_label_waits_and_prints_once_when_label_appears(self):
+        with tempfile.TemporaryDirectory() as folder:
+            w=worker(folder);set_auto_print(folder,True,enabled_from=1)
+            item={'id':1,'createdAt':10,'composition':'(A)','hasLabel':False}
+            scans=[0];sent=[];w.sync_history=lambda:None
+            def request(path,body=None):
+                if path.startswith('leads?'):
+                    scans[0]+=1
+                    return json.dumps({'items':[item] if scans[0]==1 else []}).encode()
+                if path.startswith('item/'):return json.dumps(item).encode()
+                return b'{"claimed":true}'
+            w.request=request;w.prepare=lambda *_args,**_kw:(None,None,{})
+            w.print_label=lambda *_:sent.append(1)
+            with contextlib.redirect_stdout(io.StringIO()):first=w.run_once()
+            self.assertEqual(first['missingLabels'],1);self.assertEqual(sent,[])
+            item['hasLabel']=True
+            with contextlib.redirect_stdout(io.StringIO()):second=w.run_once()
+            self.assertEqual(second['submitted'],1);self.assertEqual(sent,[1])
+            with contextlib.redirect_stdout(io.StringIO()):w.run_once()
+            self.assertEqual(sent,[1])
+
     def test_printer_check_is_read_only_and_requires_positive_ack(self):
         from types import SimpleNamespace
         with tempfile.TemporaryDirectory() as folder:

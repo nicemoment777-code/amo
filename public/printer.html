@@ -13,6 +13,7 @@
 <div id="articles" class="articles" aria-label="Артикулы"></div>
 <div class="legend">✓ Отправлено &nbsp;&nbsp; ! Нет подтверждения</div>
 <nav id="statuses" aria-label="Статус печати"><button data-status="all" class="blue">Все заявки <span></span></button><button data-status="printed" class="printed">✓ Напечатанные <span></span></button><button data-status="pending" class="pending active">! Ошибки / не напечатаны <span></span></button></nav>
+<div id="ordersLoading" role="status" hidden><span class="loading-spinner" aria-hidden="true"></span> Загружаем заявки и сверяем историю печати…</div>
 <section id="orders" aria-live="polite"></section>
 <footer><span id="notice" role="status">Интервал автопечати выбирается вверху. Для печати установите и запустите модуль Windows.</span><button id="refresh">Проверить связь и обновить</button></footer>
 </main>

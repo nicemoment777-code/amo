@@ -153,7 +153,7 @@ def run_once():
     state['scanFrom'] = scan_started
     state['autoPrintGeneration']=scope[1]
     atomic_json(state_path, state)
-    count = 0; waiting = 0; errors = []; prepared = {}; ready_items = []
+    count = 0; waiting = 0; missing_labels = 0; missing_articles = 0; errors = []; prepared = {}; ready_items = []
     routing=load_routes(DATA)
     for key in list(state['pending']):
         if not active(): break
@@ -162,6 +162,8 @@ def run_once():
             item = json.loads(request('item/' + key))
             if item.get('createdAt',0)<cutoff: continue
             if not item['composition'] or not item['hasLabel']:
+                missing_labels += int(not item['hasLabel'])
+                missing_articles += int(not item['composition'])
                 waiting += 1
                 continue
             printer=choose_printer(item,routing,PRINTER)
@@ -196,7 +198,7 @@ def run_once():
             sync_history()
         except Exception as error:
             errors.append({'id':key,'type':type(error).__name__})
-    summary = {'at': datetime.now(timezone.utc).isoformat(), 'submitted':count, 'waiting':waiting,'pending':sum(v.get('createdAt',0)>=cutoff for v in state['pending'].values()), 'uncertain':len(state['uncertain']), 'errors':errors, 'order':[item['id'] for item in ordered]}
+    summary = {'at': datetime.now(timezone.utc).isoformat(), 'submitted':count, 'waiting':waiting,'missingLabels':missing_labels,'missingArticles':missing_articles,'pending':sum(v.get('createdAt',0)>=cutoff for v in state['pending'].values()), 'uncertain':len(state['uncertain']), 'errors':errors, 'order':[item['id'] for item in ordered]}
     atomic_json(DATA/'last-run.json', summary)
     print(json.dumps(summary, ensure_ascii=True))
     if errors or state['uncertain']:

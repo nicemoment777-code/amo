@@ -41,7 +41,14 @@ function renderDisabled(){
   }
   for(const b of document.querySelectorAll('.printicon,.archive-group-print'))b.disabled=busy||!printAvailable;
 }
+let loadingCount=0;
 async function refresh(force=false){
+  const show=force||!snapshot;
+  if(show){loadingCount++;$('ordersLoading').hidden=false;$('orders').setAttribute('aria-busy','true');}
+  try{return await refreshData(force);}
+  finally{if(show){loadingCount--;$('ordersLoading').hidden=loadingCount===0;$('orders').setAttribute('aria-busy',String(loadingCount>0));}}
+}
+async function refreshData(force=false){
   verified=false;renderDisabled();
   const data=await api('devices');devices=data.devices;
   if(!devices.some(v=>v.id===device&&v.online))device=devices.find(v=>v.online)?.id||devices.find(v=>v.id===device)?.id||devices[0]?.id||'';
@@ -93,7 +100,12 @@ function render(){
   if(!snapshot)return;
   allPeriod=filterItems(snapshot.items.filter(v=>archiveMode?v.confirmed:!v.confirmed),{...currentPeriod(),query});
   deliveryItems=allPeriod.filter(v=>carrier==='all'||v.deliveryService===carrier);
-  let articlesSource=deliveryItems;
+  const printedView=archiveMode||status==='printed';
+  if(printedView)skuFilter=null;
+  $('articles').hidden=printedView;
+  $('refreshArticles').hidden=printedView;
+  document.querySelector('.articleheading h2').hidden=printedView;
+  let articlesSource=printedView?[]:deliveryItems;
   const available=new Set(articleCounts(articlesSource).map(v=>v[0]));
   if(skuFilter&&!Array.from(skuFilter).some(s=>available.has(s)))skuFilter=null;
   $('articles').replaceChildren();
@@ -103,7 +115,7 @@ function render(){
     box.append(label,node('small',`${value.count} заявок · ✓ ${value.printed}`));
     const print=node('button',undefined,'printicon');print.innerHTML=printerIcon;print.title='Печатать артикул '+sku;print.disabled=busy||!sku;print.dataset.unready=String(!sku);print.onclick=action(()=>preparePrint(deliveryItems.filter(v=>v.skus.includes(sku)),'article',`Артикул: ${sku}`));box.append(print);$('articles').append(box);
   }
-  $('resetArticles').hidden=!skuFilter;
+  $('resetArticles').hidden=printedView||!skuFilter;
   const filtered=filterItems(deliveryItems,{...currentPeriod(),skus:skuFilter});
   for(const b of $('statuses').querySelectorAll('button')){const s=b.dataset.status;b.classList.toggle('active',status===s);b.setAttribute('aria-pressed',String(status===s));b.querySelector('span').textContent=`(${s==='all'?filtered.length:filtered.filter(v=>v.confirmed===(s==='printed')).length})`;}
   for(const b of $('carriers').querySelectorAll('button')){b.classList.toggle('active',carrier===b.dataset.carrier);b.setAttribute('aria-pressed',String(carrier===b.dataset.carrier));}

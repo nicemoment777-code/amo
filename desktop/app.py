@@ -164,7 +164,7 @@ class App:
             self.delivery_menu.add(ttk.Frame(self.delivery_menu),text=label)
         self.delivery_menu.bind('<<NotebookTabChanged>>',self.delivery_changed)
         self.delivery_menu.bind('<ButtonRelease-1>',lambda _:root.after_idle(lambda:self.carrier.set(['Все доставки','Яндекс','СДЭК'][self.delivery_menu.index('current')])))
-        article_heading=ttk.Frame(frame)
+        article_heading=ttk.Frame(frame); self.article_heading=article_heading
         self.delivery_controls=ttk.Frame(article_heading)
         ttk.Label(self.delivery_controls,text='Доставка').pack(side='left',padx=(12,8))
         self.delivery_buttons={}
@@ -210,7 +210,6 @@ class App:
         self.search_entry=ttk.Entry(search_row,textvariable=self.search_text,width=34,font=('Segoe UI',12))
         self.search_entry.pack(side='left',ipady=4); self.search_entry.bind('<Return>',lambda _:self.search_orders())
         self.search_entry.bind('<KeyRelease>',lambda event:self.search_orders() if event.keysym!='Return' else None)
-        self.search_entry.bind('<KeyRelease>',lambda event:self.search_orders() if event.keysym!='Return' else None)
         RoundedButton(search_row,text='Поиск',command=self.search_orders).pack(side='left',padx=6)
         RoundedButton(search_row,text='Сбросить',command=self.clear_search).pack(side='left')
         article_heading.pack(fill='x',pady=(10,0))
@@ -218,9 +217,13 @@ class App:
         self.print_all_button.pack(side='right')
         self.article_title=ttk.Label(article_heading,text='Карточки по артикулу')
         self.article_title.pack(side='left')
-        ttk.Button(article_heading,text='Обновить артикулы',command=self.refresh_articles).pack(side='left',padx=16)
+        self.article_refresh=ttk.Button(article_heading,text='Обновить артикулы',command=self.refresh_articles)
+        self.article_refresh.pack(side='left',padx=16)
         self.article_filters=RoundedArticleCards(frame)
         self.article_filters.pack(fill='x',pady=(4,0))
+        self.loading_frame=ttk.Frame(frame)
+        ttk.Label(self.loading_frame,text='Загружаем заявки и сверяем историю печати…',foreground='#1255cf').pack(side='left',padx=(0,12))
+        self.loading_bar=ttk.Progressbar(self.loading_frame,mode='indeterminate',length=180); self.loading_bar.pack(side='left')
         self.printer_panel=None
         summary=ttk.Frame(frame); summary.pack(fill='x',pady=(16,0))
         ttk.Label(summary,text='✓ Отправлено     ! Нет подтверждения',foreground=MUTED).pack(side='left',anchor='n')
@@ -333,6 +336,7 @@ class App:
         self.card_filter=None; self.selected_ids.clear()
         self.render(True)
     def tab_changed(self,_=None):
+        if self.tabs.index('current')==1: self.card_filter=None
         self.board=self.boards[self.tabs.index('current')]
         self.render(True)
         if not self.smoke: self.reload()
@@ -386,6 +390,12 @@ class App:
     def clear_search(self):
         self.search_text.set(''); self.search_query=''; self.render(True)
     def render(self,reset=False):
+        printed_view=self.tabs.index('current')==1
+        if printed_view:
+            self.card_filter=None; self.article_filters.pack_forget(); self.article_title.pack_forget(); self.article_refresh.pack_forget()
+        else:
+            self.article_filters.pack(fill='x',pady=(4,0),after=self.article_heading)
+            self.article_title.pack(side='left'); self.article_refresh.pack(side='left',padx=16)
         try: start,end=self.period()
         except ValueError as e: return self.note(str(e))
         state=merge_history(self.worker.DATA,read_json(self.worker.DATA/'state.json',{}))
@@ -434,6 +444,11 @@ class App:
         end=datetime.now(MOSCOW); start=end-timedelta(hours=2)
         self.day_from.set(start.strftime('%d.%m.%Y')); self.day_to.set(end.strftime('%d.%m.%Y'))
         self.time_from.set(start.strftime('%H:%M')); self.time_to.set(end.strftime('%H:%M')); self.reload(True)
+    def set_loading(self,enabled):
+        if enabled:
+            self.loading_frame.pack(fill='x',pady=8,before=self.article_heading); self.loading_bar.start(12)
+        else:
+            self.loading_bar.stop(); self.loading_frame.pack_forget()
     def reload(self,reset=False):
         try:
             start,end=self.period()
@@ -442,7 +457,7 @@ class App:
                 fetch_start=min(fetch_start,self.browser_bridge.view_from)
         except ValueError as e: return self.note(str(e))
         if not self.operation_lock.acquire(False): return self.note('Дождитесь завершения текущего действия.')
-        self.busy=True; self.board.set_enabled(False); self.note('Получаем заказы из amoCRM…')
+        self.busy=True; self.set_loading(True); self.board.set_enabled(False); self.note('Получаем заказы из amoCRM…')
         self.connection.set('Соединение с amoCRM: проверяем…')
         self.connection_label.configure(foreground=MUTED)
         def work():
@@ -469,7 +484,7 @@ class App:
                     self.note('Показана сохранённая история. Для повторной проверки нажмите «Проверить связь и обновить».')
                 self.ui(failed)
             finally:
-                self.busy=False; self.operation_lock.release(); self.ui(lambda:self.board.set_enabled(True))
+                self.busy=False; self.operation_lock.release(); self.ui(lambda:(self.set_loading(False),self.board.set_enabled(True)))
         self.background(work)
     def open_archive(self):
         try:
@@ -676,9 +691,11 @@ class App:
             if result.get('paused'):
                 self.ui(lambda:self.note('Выключите и снова включите автопечать, чтобы установить начало новой очереди.' if result.get('requiresActivation') else 'Автоматическая печать выключена.'))
             else:
-                self.ui(lambda:self.note(f"Проверено. Отправлено: {result['submitted']}; ожидают данных: {result['waiting']}."))
+                self.ui(lambda:self.note(f"Проверено. Отправлено: {result['submitted']}; ожидают данных: {result['waiting']} (без этикетки: {result.get('missingLabels',0)}, без артикула: {result.get('missingArticles',0)})."))
         except SystemExit:
-            self.ui(lambda:self.note('Есть ошибка или неопределённое задание. Проверьте историю; повторная печать заблокирована.'))
+            summary=read_json(self.worker.DATA/'last-run.json',{})
+            message=f"Проверка завершена. Отправлено: {summary.get('submitted',0)}; ожидают PDF: {summary.get('missingLabels',0)}; ожидают артикул: {summary.get('missingArticles',0)}; ошибок подготовки: {len(summary.get('errors',[]))}; без подтверждения: {summary.get('uncertain',0)}. Готовые заявки продолжают печататься; неопределённые автоматически не повторяются."
+            self.ui(lambda:self.note(message))
         except Exception:
             self.ui(lambda:self.note('Проверка не выполнена. Проверьте подключение, доступ устройства и принтер.'))
         finally:
@@ -911,6 +928,12 @@ def self_test():
     assert len({round(value[0]) for value in app.board.hitboxes})==8
     assert len({round(value[1]) for value in app.board.hitboxes})==1
     app.catalog=samples; app.tabs.select(2); root.update(); app.render()
+    app.tabs.select(1); root.update(); app.render()
+    assert not app.article_filters.winfo_manager() and not app.article_refresh.winfo_manager()
+    app.set_loading(True); root.update_idletasks(); assert app.loading_frame.winfo_manager()=='pack'
+    app.set_loading(False); assert not app.loading_frame.winfo_manager()
+    app.tabs.select(2); root.update(); app.render()
+    assert app.article_filters.winfo_manager()=='pack'
     assert len(app.boards[1].groups)==0 and len(app.board.hitboxes)==8
     app.article_filters.buttons['CHECK_0'].invoke()
     assert len(app.board.hitboxes)==3
